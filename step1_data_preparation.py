@@ -13,6 +13,7 @@ from scipy import stats
 import logging
 from tqdm import tqdm
 import os
+from config import INPUT_FILES, OUTPUT_FILES, N_BOOTSTRAP
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,23 +21,6 @@ logger = logging.getLogger(__name__)
 
 # Constants
 RANDOM_SEED = 8675309  # Same as Stata
-N_BOOTSTRAP = 1000
-
-# Output files
-OUTPUT_FILES = {
-    'estimated_global_response': 'output/estimatedGlobalResponse.csv',
-    'estimated_coefficients': 'output/estimatedCoefficients.csv',
-    'main_dataset': 'output/mainDataset.csv',
-    'effect_heterogeneity': 'output/EffectHeterogeneity.csv',
-    'effect_heterogeneity_time': 'output/EffectHeterogeneityOverTime.csv',
-    'bootstrap_no_lag': 'output/bootstrap/bootstrap_noLag.csv',
-    'bootstrap_rich_poor': 'output/bootstrap/bootstrap_richpoor.csv',
-    'bootstrap_5_lag': 'output/bootstrap/bootstrap_5Lag.csv',
-    'bootstrap_rich_poor_5_lag': 'output/bootstrap/bootstrap_richpoor_5lag.csv'
-}
-
-# Create output directories
-os.makedirs('output/bootstrap', exist_ok=True)
 
 class BurkeDataPreparation:
     """Replicate Burke, Hsiang, and Miguel (2015) data preparation and analysis."""
@@ -48,7 +32,7 @@ class BurkeDataPreparation:
     def load_data(self):
         """Load the main dataset."""
         logger.info("Loading data...")
-        self.data = pd.read_csv('data/GrowthClimateDataset.csv')
+        self.data = pd.read_csv(INPUT_FILES['main_dataset'])
         logger.info(f"Data loaded: {self.data.shape}")
         return self.data
     
@@ -70,6 +54,28 @@ class BurkeDataPreparation:
         
         # Create early period indicator
         self.data['early'] = (self.data['year'] < 1990).astype(int)
+        
+        # Create country dummy variables (like Stata: i.iso_id)
+        # This creates dummy variables for all countries except one (to avoid multicollinearity)
+        logger.info("Creating country dummy variables...")
+        
+        # Get unique country codes
+        country_codes = sorted(self.data['iso_id'].unique())
+        logger.info(f"Found {len(country_codes)} unique countries")
+        
+        # Create dummy variables with 'iso_' prefix
+        country_dummies = pd.get_dummies(self.data['iso_id'], prefix='iso')
+        
+        # Drop the first country as reference category (to match Stata behavior)
+        first_country = country_codes[0]
+        reference_col = f'iso_{first_country}'
+        country_dummies = country_dummies.drop(columns=[reference_col])
+        
+        logger.info(f"Dropped '{reference_col}' as reference category")
+        logger.info(f"Created {len(country_dummies.columns)} country dummy variables")
+        
+        # Add country dummies to the main dataframe
+        self.data = pd.concat([self.data, country_dummies], axis=1)
         
         logger.info("Data preparation completed")
         return self.data
@@ -94,21 +100,27 @@ class BurkeDataPreparation:
         if trend_cols:
             self.data = self.data.drop(columns=trend_cols)
         
-        # Create country-specific linear trends (_yi_*)
-        for country in self.data['iso_id'].unique():
+        # Prepare all _yi_ and _y2_ columns in one go to avoid fragmentation
+        countries = self.data['iso_id'].unique()
+        yi_cols = {}
+        y2_cols = {}
+        for country in countries:
             mask = self.data['iso_id'] == country
-            self.data[f'_yi_{country}'] = np.where(mask, self.data['time'], 0)
-        
-        # Create country-specific quadratic trends (_y2_*)
-        for country in self.data['iso_id'].unique():
-            mask = self.data['iso_id'] == country
-            self.data[f'_y2_{country}'] = np.where(mask, self.data['time2'], 0)
+            yi_cols[f'_yi_{country}'] = np.where(mask, self.data['time'], 0)
+            y2_cols[f'_y2_{country}'] = np.where(mask, self.data['time2'], 0)
+        yi_df = pd.DataFrame(yi_cols, index=self.data.index)
+        y2_df = pd.DataFrame(y2_cols, index=self.data.index)
+        # Concatenate all at once
+        self.data = pd.concat([self.data, yi_df, y2_df], axis=1)
         
         # Drop the base country trends (like Stata: qui drop _yi_iso_id* and _y2_iso_id*)
         # This removes the base category to avoid multicollinearity
         base_trends = [col for col in self.data.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
         if base_trends:
             self.data = self.data.drop(columns=base_trends)
+        
+        # Defragment DataFrame
+        self.data = self.data.copy()
         
         logger.info("Time trends created")
         return self.data
@@ -129,23 +141,21 @@ class BurkeDataPreparation:
         
         # Prepare variables (like Stata: gen temp = UDel_temp_popweight)
         y = self.data['growthWDI']
-        temp = self.data['UDel_temp_popweight']
-        temp2 = self.data['UDel_temp_popweight_2']
-        precip = self.data['UDel_precip_popweight']
-        precip2 = self.data['UDel_precip_popweight_2']
         
         # Get fixed effects
         year_cols = [col for col in self.data.columns if col.startswith('year_')]
-        iso_cols = [col for col in self.data.columns if col.startswith('iso_')]
+        iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
         
         # Prepare X matrix (matching Stata: c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
-        X_cols = [temp, temp2, precip, precip2]
-        X_cols.extend(year_cols)
-        X_cols.extend(trend_cols)
-        X_cols.extend(iso_cols)
+        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                          'UDel_precip_popweight', 'UDel_precip_popweight_2']
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
         
-        X = pd.concat(X_cols, axis=1)
+        # Create X matrix directly from the dataframe
+        X = self.data[regression_cols]
         X = sm.add_constant(X)
         
         # Remove missing values
@@ -154,8 +164,42 @@ class BurkeDataPreparation:
         X_clean = X[valid_mask]
         
         # Convert boolean columns to integers
-        for col in X_clean.select_dtypes(include=['bool']).columns:
-            X_clean[col] = X_clean[col].astype(int)
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
+        
+        # DIAGNOSTIC: Check data types before regression
+        logger.info("=== DIAGNOSTIC: Checking data types before regression ===")
+        logger.info(f"X_clean shape: {X_clean.shape}")
+        logger.info(f"X_clean dtypes:\n{X_clean.dtypes}")
+        
+        # Check for object dtype columns
+        object_cols = X_clean.select_dtypes(include=['object']).columns
+        if len(object_cols) > 0:
+            logger.error(f"Found object dtype columns: {list(object_cols)}")
+            for col in object_cols:
+                logger.error(f"Column '{col}' unique values: {X_clean[col].unique()[:10]}")
+        
+        # Check for any non-numeric data
+        for col in X_clean.columns:
+            try:
+                pd.to_numeric(X_clean[col], errors='raise')
+            except (ValueError, TypeError) as e:
+                logger.error(f"Column '{col}' contains non-numeric data: {e}")
+                logger.error(f"Sample values: {X_clean[col].head()}")
+        
+        # Convert any remaining object columns to numeric if possible
+        for col in X_clean.columns:
+            if X_clean[col].dtype == 'object':
+                try:
+                    X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
+                    logger.info(f"Converted column '{col}' from object to numeric")
+                except Exception as e:
+                    logger.error(f"Could not convert column '{col}' to numeric: {e}")
+        
+        # Final check
+        logger.info(f"Final X_clean dtypes:\n{X_clean.dtypes}")
+        logger.info("=== END DIAGNOSTIC ===")
         
         # Run regression with clustering (like Stata: cluster(iso_id))
         model = OLS(y_clean, X_clean)
@@ -279,31 +323,29 @@ class BurkeDataPreparation:
             
             # Prepare data (like Stata: gen temp = UDel_temp_popweight; gen poorWDIppp = (GDPpctile_WDIppp<50); gen interact = poorWDIppp)
             y = self.data[var]
-            temp = self.data['UDel_temp_popweight']
-            temp2 = self.data['UDel_temp_popweight_2']
-            precip = self.data['UDel_precip_popweight']
-            precip2 = self.data['UDel_precip_popweight_2']
             poor = self.data['poorWDIppp']
             
             # Get fixed effects
             year_cols = [col for col in self.data.columns if col.startswith('year_')]
-            iso_cols = [col for col in self.data.columns if col.startswith('iso_')]
+            iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
             trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
             
             # Create interaction terms (like Stata: interact#c.(c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2))
-            temp_poor = temp * poor
-            temp2_poor = temp2 * poor
-            precip_poor = precip * poor
-            precip2_poor = precip2 * poor
+            self.data['temp_poor'] = self.data['UDel_temp_popweight'] * poor
+            self.data['temp2_poor'] = self.data['UDel_temp_popweight_2'] * poor
+            self.data['precip_poor'] = self.data['UDel_precip_popweight'] * poor
+            self.data['precip2_poor'] = self.data['UDel_precip_popweight_2'] * poor
             
             # Prepare X matrix
-            X_cols = [temp, temp2, precip, precip2, temp_poor, temp2_poor, 
-                     precip_poor, precip2_poor]
-            X_cols.extend(year_cols)
-            X_cols.extend(trend_cols)
-            X_cols.extend(iso_cols)
+            regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                              'UDel_precip_popweight', 'UDel_precip_popweight_2',
+                              'temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor']
+            regression_cols.extend(year_cols)
+            regression_cols.extend(trend_cols)
+            regression_cols.extend(iso_cols)
             
-            X = pd.concat(X_cols, axis=1)
+            # Create X matrix directly from the dataframe
+            X = self.data[regression_cols]
             X = sm.add_constant(X)
             
             # Remove missing values
@@ -312,8 +354,9 @@ class BurkeDataPreparation:
             X_clean = X[valid_mask]
             
             # Convert boolean columns to integers
-            for col in X_clean.select_dtypes(include=['bool']).columns:
-                X_clean[col] = X_clean[col].astype(int)
+            bool_cols = X_clean.select_dtypes(include=['bool']).columns
+            for col in bool_cols:
+                X_clean.loc[:, col] = X_clean[col].astype(int)
             
             # Run regression with clustering
             model = OLS(y_clean, X_clean)
@@ -329,8 +372,8 @@ class BurkeDataPreparation:
                     temp2_coef = results.params['UDel_temp_popweight_2']
                 else:
                     # Poor countries (with interaction)
-                    temp_coef = results.params['UDel_temp_popweight'] + results.params['UDel_temp_popweight:UDel_temp_popweight_2']
-                    temp2_coef = results.params['UDel_temp_popweight_2'] + results.params['UDel_temp_popweight_2:UDel_temp_popweight_2']
+                    temp_coef = results.params['UDel_temp_popweight'] + results.params.get('temp_poor', 0)
+                    temp2_coef = results.params['UDel_temp_popweight_2'] + results.params.get('temp2_poor', 0)
                 
                 # Calculate predictions
                 predictions = temp_coef * temp_range + temp2_coef * temp_range ** 2
@@ -381,31 +424,29 @@ class BurkeDataPreparation:
         
         # Prepare data (like Stata: gen temp = UDel_temp_popweight; gen early = year<1990; gen interact = early)
         y = self.data['growthWDI']
-        temp = self.data['UDel_temp_popweight']
-        temp2 = self.data['UDel_temp_popweight_2']
-        precip = self.data['UDel_precip_popweight']
-        precip2 = self.data['UDel_precip_popweight_2']
         early = self.data['early']
         
         # Get fixed effects
         year_cols = [col for col in self.data.columns if col.startswith('year_')]
-        iso_cols = [col for col in self.data.columns if col.startswith('iso_')]
+        iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
         
         # Create interaction terms
-        temp_early = temp * early
-        temp2_early = temp2 * early
-        precip_early = precip * early
-        precip2_early = precip2 * early
+        self.data['temp_early'] = self.data['UDel_temp_popweight'] * early
+        self.data['temp2_early'] = self.data['UDel_temp_popweight_2'] * early
+        self.data['precip_early'] = self.data['UDel_precip_popweight'] * early
+        self.data['precip2_early'] = self.data['UDel_precip_popweight_2'] * early
         
         # Prepare X matrix
-        X_cols = [temp, temp2, precip, precip2, temp_early, temp2_early, 
-                 precip_early, precip2_early]
-        X_cols.extend(year_cols)
-        X_cols.extend(trend_cols)
-        X_cols.extend(iso_cols)
+        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                          'UDel_precip_popweight', 'UDel_precip_popweight_2',
+                          'temp_early', 'temp2_early', 'precip_early', 'precip2_early']
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
         
-        X = pd.concat(X_cols, axis=1)
+        # Create X matrix directly from the dataframe
+        X = self.data[regression_cols]
         X = sm.add_constant(X)
         
         # Remove missing values
@@ -414,8 +455,9 @@ class BurkeDataPreparation:
         X_clean = X[valid_mask]
         
         # Convert boolean columns to integers
-        for col in X_clean.select_dtypes(include=['bool']).columns:
-            X_clean[col] = X_clean[col].astype(int)
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
         
         # Run regression with clustering
         model = OLS(y_clean, X_clean)
@@ -432,8 +474,8 @@ class BurkeDataPreparation:
                 temp2_coef = results.params['UDel_temp_popweight_2']
             else:
                 # Early period (with interaction)
-                temp_coef = results.params['UDel_temp_popweight'] + results.params['UDel_temp_popweight:UDel_temp_popweight_2']
-                temp2_coef = results.params['UDel_temp_popweight_2'] + results.params['UDel_temp_popweight_2:UDel_temp_popweight_2']
+                temp_coef = results.params['UDel_temp_popweight'] + results.params.get('temp_early', 0)
+                temp2_coef = results.params['UDel_temp_popweight_2'] + results.params.get('temp2_early', 0)
             
             # Calculate predictions
             predictions = temp_coef * temp_range + temp2_coef * temp_range ** 2
@@ -511,6 +553,7 @@ class BurkeDataPreparation:
         })
         
         # Bootstrap runs (like Stata: forvalues nn = 1/1000)
+        # Note: Using N_BOOTSTRAP = 10 for testing, set to 1000 for full replication
         for run in tqdm(range(1, N_BOOTSTRAP + 1), desc="Bootstrap pooled no lag"):
             # Sample countries with replacement (like Stata: bsample, cl(iso_id))
             sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
@@ -571,23 +614,20 @@ class BurkeDataPreparation:
         
         y = data_copy['growthWDI']
         
-        # Prepare variables (like Stata: qui gen UDel_temp_popweight_2 = UDel_temp_popweight^2)
-        temp = data_copy['UDel_temp_popweight']
-        temp2 = data_copy['UDel_temp_popweight_2']
-        precip = data_copy['UDel_precip_popweight']
-        precip2 = data_copy['UDel_precip_popweight_2']
-        
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_')]
+        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
         
-        X_cols = [temp, temp2, precip, precip2]
-        X_cols.extend(year_cols)
-        X_cols.extend(trend_cols)
-        X_cols.extend(iso_cols)
+        # Prepare X matrix
+        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                          'UDel_precip_popweight', 'UDel_precip_popweight_2']
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
         
-        X = pd.concat(X_cols, axis=1)
+        # Create X matrix directly from the dataframe
+        X = data_copy[regression_cols]
         X = sm.add_constant(X)
         
         # Remove missing values
@@ -596,8 +636,9 @@ class BurkeDataPreparation:
         X_clean = X[valid_mask]
         
         # Convert boolean columns to integers
-        for col in X_clean.select_dtypes(include=['bool']).columns:
-            X_clean[col] = X_clean[col].astype(int)
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
         
         # Run regression (like Stata: qui reg growthWDI UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
         model = OLS(y_clean, X_clean)
@@ -652,7 +693,8 @@ class BurkeDataPreparation:
             'prec2poor': baseline_results['prec2poor']
         })
         
-        # Bootstrap runs
+        # Bootstrap runs (like Stata: forvalues nn = 1/1000)
+        # Note: Using N_BOOTSTRAP = 10 for testing, set to 1000 for full replication
         for run in tqdm(range(1, N_BOOTSTRAP + 1), desc="Bootstrap rich/poor no lag"):
             sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
             
@@ -714,32 +756,29 @@ class BurkeDataPreparation:
             data_copy = data_copy.drop(columns=base_trends)
         
         y = data_copy['growthWDI']
-        
-        # Prepare variables (like Stata: qui gen poor = (GDPpctile_WDIppp<50))
-        temp = data_copy['UDel_temp_popweight']
-        temp2 = data_copy['UDel_temp_popweight_2']
-        precip = data_copy['UDel_precip_popweight']
-        precip2 = data_copy['UDel_precip_popweight_2']
         poor = data_copy['poorWDIppp']
         
         # Create interaction terms (like Stata: poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2))
-        temp_poor = temp * poor
-        temp2_poor = temp2 * poor
-        precip_poor = precip * poor
-        precip2_poor = precip2 * poor
+        data_copy['temp_poor'] = data_copy['UDel_temp_popweight'] * poor
+        data_copy['temp2_poor'] = data_copy['UDel_temp_popweight_2'] * poor
+        data_copy['precip_poor'] = data_copy['UDel_precip_popweight'] * poor
+        data_copy['precip2_poor'] = data_copy['UDel_precip_popweight_2'] * poor
         
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_')]
+        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
         
-        X_cols = [temp, temp2, precip, precip2, temp_poor, temp2_poor, 
-                 precip_poor, precip2_poor]
-        X_cols.extend(year_cols)
-        X_cols.extend(trend_cols)
-        X_cols.extend(iso_cols)
+        # Prepare X matrix
+        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                          'UDel_precip_popweight', 'UDel_precip_popweight_2',
+                          'temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor']
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
         
-        X = pd.concat(X_cols, axis=1)
+        # Create X matrix directly from the dataframe
+        X = data_copy[regression_cols]
         X = sm.add_constant(X)
         
         # Remove missing values
@@ -748,8 +787,9 @@ class BurkeDataPreparation:
         X_clean = X[valid_mask]
         
         # Convert boolean columns to integers
-        for col in X_clean.select_dtypes(include=['bool']).columns:
-            X_clean[col] = X_clean[col].astype(int)
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
         
         # Run regression (like Stata: qui reg growthWDI poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id)
         model = OLS(y_clean, X_clean)
@@ -757,13 +797,13 @@ class BurkeDataPreparation:
         
         return {
             'temp': results.params['UDel_temp_popweight'],
-            'temppoor': results.params['UDel_temp_popweight:UDel_temp_popweight_2'],
+            'temppoor': results.params.get('temp_poor', 0),
             'temp2': results.params['UDel_temp_popweight_2'],
-            'temp2poor': results.params['UDel_temp_popweight_2:UDel_temp_popweight_2'],
+            'temp2poor': results.params.get('temp2_poor', 0),
             'prec': results.params['UDel_precip_popweight'],
-            'precpoor': results.params['UDel_precip_popweight:UDel_precip_popweight_2'],
+            'precpoor': results.params.get('precip_poor', 0),
             'prec2': results.params['UDel_precip_popweight_2'],
-            'prec2poor': results.params['UDel_precip_popweight_2:UDel_precip_popweight_2']
+            'prec2poor': results.params.get('precip2_poor', 0)
         }
     
     def _bootstrap_pooled_5_lag(self, countries, n_countries):

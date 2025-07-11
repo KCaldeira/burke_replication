@@ -7,9 +7,8 @@ from pathlib import Path
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent
-ORIGINAL_DATA_PATH = PROJECT_ROOT.parent / "BurkeHsiangMiguel2015_Replication"
 DATA_PATH = PROJECT_ROOT / "data"
-OUTPUT_PATH = PROJECT_ROOT / "output"
+OUTPUT_PATH = PROJECT_ROOT / "data" / "output"
 FIGURES_PATH = PROJECT_ROOT / "figures"
 
 # Create directories if they don't exist
@@ -25,7 +24,7 @@ SKIP_STEP_5 = False  # Skip damage function
 SKIP_STEP_6 = False  # Skip figure generation
 
 # Bootstrap settings
-N_BOOTSTRAP = 1000
+N_BOOTSTRAP = 10  # Set to 10 for testing, 1000 for full replication
 RANDOM_SEED = 8675309  # Same as original Stata code
 
 # Model specifications
@@ -46,11 +45,11 @@ PROJECTION_YEARS = list(range(2010, 2100))  # 2010-2099
 
 # File paths
 INPUT_FILES = {
-    'main_dataset': ORIGINAL_DATA_PATH / "data" / "input" / "GrowthClimateDataset.csv",
-    'ssp_population': ORIGINAL_DATA_PATH / "data" / "input" / "SSP" / "SSP_PopulationProjections.csv",
-    'ssp_growth': ORIGINAL_DATA_PATH / "data" / "input" / "SSP" / "SSP_GrowthProjections.csv",
-    'temperature_change': ORIGINAL_DATA_PATH / "data" / "input" / "CCprojections" / "CountryTempChange_RCP85.csv",
-    'iam_data': ORIGINAL_DATA_PATH / "data" / "input" / "IAMdata" / "ProcessedKoppData.csv"
+    'main_dataset': DATA_PATH / "input" / "GrowthClimateDataset.csv",
+    'ssp_population': DATA_PATH / "input" / "SSP" / "SSP_PopulationProjections.csv",
+    'ssp_growth': DATA_PATH / "input" / "SSP" / "SSP_GrowthProjections.csv",
+    'temperature_change': DATA_PATH / "input" / "CCprojections" / "CountryTempChange_RCP85.csv",
+    'iam_data': DATA_PATH / "input" / "IAMdata" / "ProcessedKoppData.csv"
 }
 
 # Output file patterns

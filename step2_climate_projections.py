@@ -29,7 +29,7 @@ class ClimateProjections:
         logger.info("Loading climate projection data...")
         
         # Check if the temperature change file already exists from original data
-        temp_change_file = ORIGINAL_DATA_PATH / "data" / "input" / "CCprojections" / "CountryTempChange_RCP85.csv"
+        temp_change_file = INPUT_FILES['temperature_change']
         
         if temp_change_file.exists():
             logger.info("Loading existing temperature change data...")

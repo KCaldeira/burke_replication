@@ -52,13 +52,7 @@ def main():
     
     logger.info("Starting Burke, Hsiang, and Miguel 2015 replication")
     logger.info(f"Project root: {PROJECT_ROOT}")
-    logger.info(f"Original data path: {ORIGINAL_DATA_PATH}")
-    
-    # Check if original data exists
-    if not ORIGINAL_DATA_PATH.exists():
-        logger.error(f"Original data path does not exist: {ORIGINAL_DATA_PATH}")
-        logger.error("Please ensure the BurkeHsiangMiguel2015_Replication directory is available")
-        return
+
     
     # Step 1: Data Preparation and Initial Analysis
     if not check_skip_condition(SKIP_STEP_1, [
