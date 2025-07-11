@@ -36,6 +36,7 @@ burke_replication/
 ## Data Requirements
 
 The original data files from Burke, Hsiang, and Miguel 2015 should be placed in the parent directory:
+
 ```
 ../BurkeHsiangMiguel2015_Replication/
 ├── data/
@@ -249,73 +250,35 @@ The `config.py` file contains all configuration settings:
 
 ### Step 3 Outputs
 - `popProjections.Rdata`: Population projections
-- `growthProjections.Rdata`: Growth projections
+- `growthProjections.Rdata`: Growth rate projections
 
 ### Step 4 Outputs
-- `GDPcapCC_*.pkl`: GDP per capita with climate change
-- `GDPcapNoCC_*.pkl`: GDP per capita without climate change
-- `GlobalChanges_*.pkl`: Global summary statistics
+- `GDPcapCC_*_*.Rdata`: GDP per capita with climate change
+- `GDPcapNoCC_*_*.Rdata`: GDP per capita without climate change
+- `GlobalChanges_*_*.Rdata`: Global summary statistics
 
 ### Step 5 Outputs
-- `DamageFunction_*.pkl`: Damage functions by model
+- `DamageFunction_*.Rdata`: Damage functions by model
 
 ### Step 6 Outputs
-- `Figure2.pdf`, `Figure3.pdf`, etc.: Main figures
-- `summary_statistics.csv`: Summary tables
+- PDF figures and tables
 
 ## Dependencies
 
-- **pandas**: Data manipulation and analysis
-- **numpy**: Numerical computations
-- **scipy**: Statistical functions
-- **statsmodels**: Regression analysis
-- **matplotlib/seaborn**: Plotting
-- **rasterio/geopandas**: Spatial data processing (if needed)
-- **tqdm**: Progress bars
-- **joblib**: Parallel processing
-
-## Testing
-
-Each step can be tested independently:
-
-```bash
-# Test data preparation
-python -c "from step1_data_preparation import run_step1; run_step1()"
-
-# Test climate projections
-python -c "from step2_climate_projections import run_step2; run_step2()"
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Missing Data Files**: Ensure the original Burke data is in the correct location
-2. **Memory Issues**: Large bootstrap arrays may require significant memory
-3. **File Permissions**: Ensure write permissions for output directories
-
-### Logging
-
-The process generates detailed logs in `burke_replication.log` with information about:
-- Data loading and validation
-- Processing progress
-- Warning and error messages
-- Summary statistics
-
-## Contributing
-
-When modifying the code:
-1. Maintain consistency with original methodology
-2. Update configuration as needed
-3. Test individual steps
-4. Update documentation
-
-## References
-
-- Burke, M., Hsiang, S. M., & Miguel, E. (2015). Global non-linear effect of temperature on economic production. *Nature*, 527(7577), 235-239.
-- Original replication materials: BurkeHsiangMiguel2015_Replication
+- pandas
+- numpy
+- statsmodels
+- scipy
+- matplotlib
+- seaborn
+- tqdm
 
 ## License
 
-This project is for research and educational purposes. Please cite the original Burke, Hsiang, and Miguel (2015) paper when using this code. #   b u r k e _ r e p l i c a t i o n  
- 
+This project is for research purposes. Please cite the original paper:
+
+Burke, M., Hsiang, S. M., & Miguel, E. (2015). Global non-linear effect of temperature on economic production. Nature, 527(7577), 235-239.
+
+## Contributing
+
+This is a replication project. The goal is to maintain consistency with the original analysis while providing a modern Python implementation.
