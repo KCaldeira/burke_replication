@@ -17,7 +17,7 @@ for path in [DATA_PATH, OUTPUT_PATH, FIGURES_PATH]:
     path.mkdir(exist_ok=True)
 
 # Processing flags
-SKIP_STEP_1 = False   # Skip data preparation and initial analysis (Step 1 completed)
+SKIP_STEP_1 = False  # Skip data preparation and initial analysis (Step 1 completed)
 SKIP_STEP_2 = False  # Skip climate projections
 SKIP_STEP_3 = False  # Skip socioeconomic scenarios
 SKIP_STEP_4 = False  # Skip impact projections

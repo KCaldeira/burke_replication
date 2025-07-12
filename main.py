@@ -26,16 +26,10 @@ def setup_logging():
     return config_setup_logging()
 
 def check_skip_condition(skip_flag, output_files, step_name):
-    """Check if a step should be skipped based on flag and output file existence."""
+    """Check if a step should be skipped based on flag only."""
     if skip_flag:
-        # Check if all required output files exist
-        all_files_exist = all(Path(f).exists() for f in output_files if f is not None)
-        if all_files_exist:
-            logger.info(f"Skipping {step_name} - output files already exist and skip flag is set")
-            return True
-        else:
-            logger.warning(f"Skip flag set for {step_name} but some output files missing. Running step.")
-            return False
+        logger.info(f"Skipping {step_name} - skip flag is set")
+        return True
     return False
 
 def main():
