@@ -3,10 +3,11 @@ Configuration file for Burke, Hsiang, and Miguel 2015 replication project.
 """
 
 import os
+import logging
 from pathlib import Path
 
-# Project paths
-PROJECT_ROOT = Path(__file__).parent
+# Project paths - ensure they're always relative to this config file
+PROJECT_ROOT = Path(__file__).parent.absolute()
 DATA_PATH = PROJECT_ROOT / "data"
 OUTPUT_PATH = PROJECT_ROOT / "data" / "output"
 FIGURES_PATH = PROJECT_ROOT / "figures"
@@ -16,12 +17,15 @@ for path in [DATA_PATH, OUTPUT_PATH, FIGURES_PATH]:
     path.mkdir(exist_ok=True)
 
 # Processing flags
-SKIP_STEP_1 = False  # Skip data preparation and initial analysis
+SKIP_STEP_1 = False   # Skip data preparation and initial analysis (Step 1 completed)
 SKIP_STEP_2 = False  # Skip climate projections
 SKIP_STEP_3 = False  # Skip socioeconomic scenarios
 SKIP_STEP_4 = False  # Skip impact projections
 SKIP_STEP_5 = False  # Skip damage function
 SKIP_STEP_6 = False  # Skip figure generation
+
+# Verbosity settings
+VERBOSITY_LEVEL = 3  # 0=quiet, 1=main steps, 2=detailed, 3=debug
 
 # Bootstrap settings
 N_BOOTSTRAP = 10  # Set to 10 for testing, 1000 for full replication
@@ -70,4 +74,37 @@ OUTPUT_FILES = {
 
 # Create bootstrap directory
 (OUTPUT_PATH / "bootstrap").mkdir(exist_ok=True)
-(OUTPUT_PATH / "projectionOutput").mkdir(exist_ok=True) 
+(OUTPUT_PATH / "projectionOutput").mkdir(exist_ok=True)
+
+def setup_logging(verbosity_level=VERBOSITY_LEVEL):
+    """Set up logging based on verbosity level."""
+    if verbosity_level == 0:
+        # Quiet mode - only errors
+        log_level = logging.ERROR
+        format_str = '%(levelname)s - %(message)s'
+    elif verbosity_level == 1:
+        # Main steps only
+        log_level = logging.INFO
+        format_str = '%(asctime)s - %(levelname)s - %(message)s'
+    elif verbosity_level == 2:
+        # Detailed output
+        log_level = logging.INFO
+        format_str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    elif verbosity_level >= 3:
+        # Debug mode
+        log_level = logging.DEBUG
+        format_str = '%(asctime)s - %(name)s - %(levelname)s:%(lineno)d - %(message)s'
+    else:
+        # Default to INFO
+        log_level = logging.INFO
+        format_str = '%(asctime)s - %(levelname)s - %(message)s'
+    
+    logging.basicConfig(
+        level=log_level,
+        format=format_str,
+        handlers=[
+            logging.FileHandler('burke_replication.log'),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger(__name__) 

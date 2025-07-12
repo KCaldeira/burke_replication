@@ -3,6 +3,22 @@ Step 1: Data Preparation and Initial Analysis
 
 This module replicates the Stata scripts GenerateFigure2Data.do and GenerateBootstrapData.do
 to perform baseline regression analysis, heterogeneity analysis, and bootstrap analysis.
+
+Original Stata files:
+- GenerateFigure2Data.do: Main regression analysis and heterogeneity analysis
+- GenerateBootstrapData.do: Bootstrap analysis with various specifications
+
+Original Stata code structure:
+GenerateFigure2Data.do:
+- Baseline regression: reg growthWDI c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id, cluster(iso_id)
+- Heterogeneity analysis: reg `var' interact#c.(c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2) _yi_* _y2_* i.year i.iso_id, cl(iso_id)
+- Temporal heterogeneity: reg growthWDI interact#c.(c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2) _yi_* _y2_* i.year i.iso_id, cl(iso_id)
+
+GenerateBootstrapData.do:
+- Bootstrap pooled no lag: reg growthWDI UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id
+- Bootstrap rich/poor no lag: reg growthWDI poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id
+- Bootstrap pooled 5 lag: reg growthWDI L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id
+- Bootstrap rich/poor 5 lag: reg growthWDI poor#c.(L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2)) i.year _yi_* _y2_* i.iso_id
 """
 
 import pandas as pd
@@ -32,7 +48,7 @@ class BurkeDataPreparation:
     def load_data(self):
         """Load the main dataset."""
         logger.info("Loading data...")
-        self.data = pd.read_csv(INPUT_FILES['main_dataset'])
+        self.data = pd.read_csv(INPUT_FILES['main_dataset'], encoding='latin-1')
         logger.info(f"Data loaded: {self.data.shape}")
         return self.data
     
@@ -129,16 +145,35 @@ class BurkeDataPreparation:
         """
         Run baseline regression matching Stata specification exactly.
         
-        Original Stata code:
+        Original Stata code from GenerateFigure2Data.do:
         use data/input/GrowthClimateDataset, clear
         gen temp = UDel_temp_popweight
         reg growthWDI c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id, cluster(iso_id)
+            mat b = e(b)
+            mat b = b[1,1..2] //save coefficients
+            di _b[temp]/-2/_b[c.temp#c.temp]
+        loc min -5
+        margins, at(temp=(`min'(1)35)) post noestimcheck level(90)
+        parmest, norestore level(90)
+        split parm, p("." "#")
+        ren parm1 x
+        destring x, replace
+        replace x = x + `min' - 1  
+        drop parm* 
+        outsheet using data/output/estimatedGlobalResponse.csv, comma replace  //writing out results for R
+        use data/input/GrowthClimateDataset, clear
+        keep UDel_temp_popweight Pop TotGDP growthWDI GDPpctile_WDIppp continent iso countryname year
+        outsheet using data/output/mainDataset.csv, comma replace
+        clear
+        svmat b
+        outsheet using data/output/estimatedCoefficients.csv, comma replace
         """
         logger.info("Running baseline regression...")
         
         # Create time trends for this regression
         self.create_time_trends()
         
+        # Original Stata code: gen temp = UDel_temp_popweight
         # Prepare variables (like Stata: gen temp = UDel_temp_popweight)
         y = self.data['growthWDI']
         
@@ -147,6 +182,7 @@ class BurkeDataPreparation:
         iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
         
+        # Original Stata code: reg growthWDI c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id, cluster(iso_id)
         # Prepare X matrix (matching Stata: c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
         regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
                           'UDel_precip_popweight', 'UDel_precip_popweight_2']
@@ -806,6 +842,226 @@ class BurkeDataPreparation:
             'prec2poor': results.params.get('precip2_poor', 0)
         }
     
+    def _create_lagged_variables(self, data):
+        """Create lagged variables for 5-lag models (L0 through L5)."""
+        data_copy = data.copy()
+        
+        # Sort by country and year for lagging
+        data_copy = data_copy.sort_values(['iso_id', 'year'])
+        
+        # Create lagged variables for temperature and precipitation
+        for lag in range(1, 6):  # L1 through L5
+            # Temperature lags
+            data_copy[f'L{lag}temp'] = data_copy.groupby('iso_id')['UDel_temp_popweight'].shift(lag)
+            data_copy[f'L{lag}temp2'] = data_copy.groupby('iso_id')['UDel_temp_popweight_2'].shift(lag)
+            # Precipitation lags
+            data_copy[f'L{lag}prec'] = data_copy.groupby('iso_id')['UDel_precip_popweight'].shift(lag)
+            data_copy[f'L{lag}prec2'] = data_copy.groupby('iso_id')['UDel_precip_popweight_2'].shift(lag)
+        
+        # For rich/poor model, also create interaction lags
+        if 'poorWDIppp' in data_copy.columns:
+            for lag in range(1, 6):
+                # Poor interaction lags
+                data_copy[f'L{lag}temppoor'] = data_copy[f'L{lag}temp'] * data_copy['poorWDIppp']
+                data_copy[f'L{lag}temp2poor'] = data_copy[f'L{lag}temp2'] * data_copy['poorWDIppp']
+                data_copy[f'L{lag}precpoor'] = data_copy[f'L{lag}prec'] * data_copy['poorWDIppp']
+                data_copy[f'L{lag}prec2poor'] = data_copy[f'L{lag}prec2'] * data_copy['poorWDIppp']
+        
+        return data_copy
+    
+    def _run_pooled_5_lag_regression(self, data):
+        """
+        Run pooled regression with 5 lags (matching Stata specification).
+        
+        Original Stata code:
+        xtset iso_id year
+        qui reg growthWDI L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id
+        """
+        # Create lagged variables
+        data_copy = self._create_lagged_variables(data)
+        
+        # Recreate time trends for this regression
+        data_copy['time'] = data_copy['year'] - 1985
+        data_copy['time2'] = data_copy['time'] ** 2
+        
+        # Create time trends
+        for country in data_copy['iso_id'].unique():
+            mask = data_copy['iso_id'] == country
+            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+        
+        # Drop base trends
+        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
+        if base_trends:
+            data_copy = data_copy.drop(columns=base_trends)
+        
+        y = data_copy['growthWDI']
+        
+        # Get fixed effects
+        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
+        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
+        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
+        
+        # Prepare X matrix with all lagged variables
+        regression_cols = []
+        # Current and lagged temperature
+        regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
+        # Current and lagged temperature squared
+        regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
+        # Current and lagged precipitation
+        regression_cols.extend(['UDel_precip_popweight', 'L1prec', 'L2prec', 'L3prec', 'L4prec', 'L5prec'])
+        # Current and lagged precipitation squared
+        regression_cols.extend(['UDel_precip_popweight_2', 'L1prec2', 'L2prec2', 'L3prec2', 'L4prec2', 'L5prec2'])
+        
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
+        
+        # Create X matrix
+        X = data_copy[regression_cols]
+        X = sm.add_constant(X)
+        
+        # Remove missing values
+        valid_mask = ~(y.isna() | X.isna().any(axis=1))
+        y_clean = y[valid_mask]
+        X_clean = X[valid_mask]
+        
+        # Convert boolean columns to integers
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
+        
+        # Run regression
+        model = OLS(y_clean, X_clean)
+        results = model.fit()
+        
+        # Extract coefficients
+        coefs = results.params
+        
+        # Calculate tlin and tsq (sums of lagged coefficients)
+        tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
+                coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+        tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+               coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+        
+        return {
+            'temp': coefs['UDel_temp_popweight'],
+            'L1temp': coefs['L1temp'],
+            'L2temp': coefs['L2temp'],
+            'L3temp': coefs['L3temp'],
+            'L4temp': coefs['L4temp'],
+            'L5temp': coefs['L5temp'],
+            'temp2': coefs['UDel_temp_popweight_2'],
+            'L1temp2': coefs['L1temp2'],
+            'L2temp2': coefs['L2temp2'],
+            'L3temp2': coefs['L3temp2'],
+            'L4temp2': coefs['L4temp2'],
+            'L5temp2': coefs['L5temp2'],
+            'tlin': tlin,
+            'tsq': tsq
+        }
+    
+    def _run_rich_poor_5_lag_regression(self, data):
+        """
+        Run rich/poor regression with 5 lags (matching Stata specification).
+        
+        Original Stata code:
+        xtset iso_id year
+        qui gen poor = (GDPpctile_WDIppp<50)
+        qui replace poor=. if GDPpctile_WDIppp==.
+        qui reg growthWDI poor#c.(L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2)) i.year _yi_* _y2_* i.iso_id
+        """
+        # Create lagged variables
+        data_copy = self._create_lagged_variables(data)
+        
+        # Recreate time trends for this regression
+        data_copy['time'] = data_copy['year'] - 1985
+        data_copy['time2'] = data_copy['time'] ** 2
+        
+        # Create time trends
+        for country in data_copy['iso_id'].unique():
+            mask = data_copy['iso_id'] == country
+            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+        
+        # Drop base trends
+        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
+        if base_trends:
+            data_copy = data_copy.drop(columns=base_trends)
+        
+        y = data_copy['growthWDI']
+        poor = data_copy['poorWDIppp']
+        
+        # Get fixed effects
+        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
+        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
+        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
+        
+        # Prepare X matrix with all lagged variables and interactions
+        regression_cols = []
+        # Current and lagged temperature (rich)
+        regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
+        # Current and lagged temperature (poor)
+        regression_cols.extend(['L1temppoor', 'L2temppoor', 'L3temppoor', 'L4temppoor', 'L5temppoor'])
+        # Current and lagged temperature squared (rich)
+        regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
+        # Current and lagged temperature squared (poor)
+        regression_cols.extend(['L1temp2poor', 'L2temp2poor', 'L3temp2poor', 'L4temp2poor', 'L5temp2poor'])
+        
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
+        
+        # Create X matrix
+        X = data_copy[regression_cols]
+        X = sm.add_constant(X)
+        
+        # Remove missing values
+        valid_mask = ~(y.isna() | X.isna().any(axis=1))
+        y_clean = y[valid_mask]
+        X_clean = X[valid_mask]
+        
+        # Convert boolean columns to integers
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
+        
+        # Run regression
+        model = OLS(y_clean, X_clean)
+        results = model.fit()
+        
+        # Extract coefficients
+        coefs = results.params
+        
+        # Calculate tlin and tsq for rich and poor
+        tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
+                coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+        tlinpoor = (coefs['L1temppoor'] + coefs['L2temppoor'] + coefs['L3temppoor'] + 
+                   coefs['L4temppoor'] + coefs['L5temppoor'])
+        tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+               coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+        tsqpoor = (coefs['L1temp2poor'] + coefs['L2temp2poor'] + coefs['L3temp2poor'] + 
+                  coefs['L4temp2poor'] + coefs['L5temp2poor'])
+        
+        return {
+            'temp': coefs['UDel_temp_popweight'],
+            'L1temp': coefs['L1temp'],
+            'L2temp': coefs['L2temp'],
+            'L3temp': coefs['L3temp'],
+            'L4temp': coefs['L4temp'],
+            'L5temp': coefs['L5temp'],
+            'temp2': coefs['UDel_temp_popweight_2'],
+            'L1temp2': coefs['L1temp2'],
+            'L2temp2': coefs['L2temp2'],
+            'L3temp2': coefs['L3temp2'],
+            'L4temp2': coefs['L4temp2'],
+            'L5temp2': coefs['L5temp2'],
+            'tlin': tlin,
+            'tlinpoor': tlinpoor,
+            'tsq': tsq,
+            'tsqpoor': tsqpoor
+        }
+    
     def _bootstrap_pooled_5_lag(self, countries, n_countries):
         """
         Bootstrap pooled model with 5 lags.
@@ -829,10 +1085,41 @@ class BurkeDataPreparation:
         post boot (`nn') (b[1,1]) (b[1,2]) (b[1,3]) (b[1,4]) (b[1,5]) (b[1,6]) (b[1,7]) (b[1,8]) (b[1,9]) (b[1,10]) (b[1,11]) (b[1,12])
         }
         """
-        # This is a simplified version - full implementation would require lag creation
-        logger.info("Bootstrap pooled 5 lag - simplified implementation")
-        # Placeholder for now
-        pass
+        logger.info("Running bootstrap pooled 5 lag...")
+        
+        results_list = []
+        
+        # Baseline run
+        baseline_results = self._run_pooled_5_lag_regression(self.data)
+        baseline_results['run'] = 0
+        results_list.append(baseline_results)
+        
+        # Bootstrap runs
+        for run in tqdm(range(1, N_BOOTSTRAP + 1), desc="Pooled 5-lag bootstrap"):
+            try:
+                # Sample countries with replacement
+                sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
+                
+                # Create bootstrap sample
+                bootstrap_data = []
+                for country in sampled_countries:
+                    country_data = self.data[self.data['iso_id'] == country].copy()
+                    bootstrap_data.append(country_data)
+                
+                bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
+                
+                # Run regression
+                results = self._run_pooled_5_lag_regression(bootstrap_sample)
+                results['run'] = run
+                results_list.append(results)
+                
+            except Exception as e:
+                logger.warning(f"Bootstrap run {run} failed: {e}")
+                continue
+        
+        bootstrap_df = pd.DataFrame(results_list)
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_5_lag'], index=False)
+        logger.info(f"Bootstrap pooled 5 lag completed: {len(results_list)} successful runs")
     
     def _bootstrap_rich_poor_5_lag(self, countries, n_countries):
         """
@@ -863,10 +1150,41 @@ class BurkeDataPreparation:
         post boot (`nn') (b[1,1]) (b[1,2]) (b[1,3]) (b[1,4]) (b[1,5]) (b[1,6]) (b[1,7]) (b[1,8]) (b[1,9]) (b[1,10]) (b[1,11]) (b[1,12]) (b[1,13]) (b[1,14]) (b[1,15]) (b[1,16]) (b[1,17]) (b[1,18]) (b[1,19]) (b[1,20]) (b[1,21]) (b[1,22]) (b[1,23]) (b[1,24])
         }
         """
-        # This is a simplified version - full implementation would require lag creation
-        logger.info("Bootstrap rich/poor 5 lag - simplified implementation")
-        # Placeholder for now
-        pass
+        logger.info("Running bootstrap rich/poor 5 lag...")
+        
+        results_list = []
+        
+        # Baseline run
+        baseline_results = self._run_rich_poor_5_lag_regression(self.data)
+        baseline_results['run'] = 0
+        results_list.append(baseline_results)
+        
+        # Bootstrap runs
+        for run in tqdm(range(1, N_BOOTSTRAP + 1), desc="Rich/poor 5-lag bootstrap"):
+            try:
+                # Sample countries with replacement
+                sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
+                
+                # Create bootstrap sample
+                bootstrap_data = []
+                for country in sampled_countries:
+                    country_data = self.data[self.data['iso_id'] == country].copy()
+                    bootstrap_data.append(country_data)
+                
+                bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
+                
+                # Run regression
+                results = self._run_rich_poor_5_lag_regression(bootstrap_sample)
+                results['run'] = run
+                results_list.append(results)
+                
+            except Exception as e:
+                logger.warning(f"Bootstrap run {run} failed: {e}")
+                continue
+        
+        bootstrap_df = pd.DataFrame(results_list)
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_rich_poor_5_lag'], index=False)
+        logger.info(f"Bootstrap rich/poor 5 lag completed: {len(results_list)} successful runs")
     
     def save_main_dataset(self):
         """

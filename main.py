@@ -22,15 +22,8 @@ from step6_figure_generation import run_step6
 
 def setup_logging():
     """Set up logging configuration."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler('burke_replication.log'),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
+    from config import setup_logging as config_setup_logging
+    return config_setup_logging()
 
 def check_skip_condition(skip_flag, output_files, step_name):
     """Check if a step should be skipped based on flag and output file existence."""
