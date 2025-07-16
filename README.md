@@ -95,8 +95,11 @@ python step6_figure_generation.py
 #### 1.1 Baseline Regression Analysis
 - **Input:** `GrowthClimateDataset.dta` (main dataset with temperature, precipitation, GDP growth data)
 - **Process:** 
+  
   1.1.1. Run baseline quadratic temperature response regression
+  
   1.1.2. Estimate global response function with temperature and temperature squared
+  
   1.1.3. Generate marginal effects and confidence intervals
 - **Output:** 
   - `estimatedGlobalResponse.csv` (response function data)
@@ -105,8 +108,11 @@ python step6_figure_generation.py
 
 #### 1.2 Heterogeneity Analysis
 - **Process:**
+  
   1.2.1. Analyze rich vs poor country responses (GDP percentile < 50)
+  
   1.2.2. Analyze agricultural vs non-agricultural GDP growth
+  
   1.2.3. Analyze early vs late period responses (pre/post 1990)
 - **Output:** 
   - `EffectHeterogeneity.csv` (rich/poor, agricultural responses)
@@ -114,8 +120,11 @@ python step6_figure_generation.py
 
 #### 1.3 Bootstrap Analysis
 - **Process:**
+  
   1.3.1. Bootstrap regression coefficients (1000 replicates)
+  
   1.3.2. Sample countries with replacement
+  
   1.3.3. Run multiple model specifications:
     - Pooled model (no lags)
     - Rich/poor model (no lags)
@@ -136,8 +145,11 @@ python step6_figure_generation.py
   - Population data (Gridded Population of the World)
   - Country shapefiles
 - **Process:**
+  
   2.1.1. Calculate population-weighted country-specific temperature changes
+  
   2.1.2. Generate conversion factors from global to country-level temperature changes
+  
   2.1.3. Project temperature changes for 2080-2100 relative to 1986-2005 baseline
 - **Output:** `CountryTempChange_RCP85.csv`
 
@@ -150,8 +162,11 @@ python step6_figure_generation.py
   - UN population projections
   - Historical growth rates (1980-2010 baseline)
 - **Process:**
+  
   3.1.1. Interpolate 5-year SSP projections to annual data
+  
   3.1.2. Create baseline scenario with historical growth rates
+  
   3.1.3. Process SSP scenarios 1-5
 - **Output:** 
   - `popProjections.Rdata`
@@ -166,12 +181,15 @@ python step6_figure_generation.py
   - Population and growth projections
   - Temperature change projections
 - **Process:**
+  
   4.1.1. Project GDP per capita with and without climate change (2010-2099)
+  
   4.1.2. Apply four regression models:
     - Pooled model (no lags)
     - Rich/poor model (no lags)
     - Pooled model (5 lags)
     - Rich/poor model (5 lags)
+  
   4.1.3. Calculate global averages and totals
 - **Output:** 
   - `GDPcapCC_*_*.Rdata` (GDP per capita with climate change)
@@ -186,8 +204,11 @@ python step6_figure_generation.py
   - Impact projections from Step 4
   - IAM (Integrated Assessment Model) temperature scenarios
 - **Process:**
+  
   5.1.1. Calculate damages for different global temperature increases (0.8°C to 6°C)
+  
   5.1.2. Match to IAM temperature scenarios (DICE, FUND, PAGE)
+  
   5.1.3. Generate damage functions for all model specifications
 - **Output:** 
   - `DamageFunction_*.Rdata` (damage functions by model)
@@ -198,8 +219,11 @@ python step6_figure_generation.py
 #### 6.1 Visualization
 - **Input:** All output data from previous steps
 - **Process:**
+  
   6.1.1. Generate main figures (2-5)
+  
   6.1.2. Generate extended data figures
+  
   6.1.3. Create tables and supplementary materials
 - **Output:** PDF figures and tables
 
