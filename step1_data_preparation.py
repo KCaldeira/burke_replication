@@ -56,8 +56,10 @@ class BurkeDataPreparation:
         """Prepare data for analysis."""
         logger.info("Preparing data...")
         
-        # Create time variables (like Stata: gen time = year - 1985)
-        self.data['time'] = self.data['year'] - 1985
+        # Create time variables (like Stata: gen time = year - 1960)
+        # Original Stata: gen time = year - 1960
+        logger.info("Creating time variables with reference year 1960...")
+        self.data['time'] = self.data['year'] - 1960
         self.data['time2'] = self.data['time'] ** 2
         
         # Create temperature squared term
@@ -80,7 +82,7 @@ class BurkeDataPreparation:
         logger.info(f"Found {len(country_codes)} unique countries")
         
         # Create dummy variables with 'iso_' prefix
-        country_dummies = pd.get_dummies(self.data['iso_id'], prefix='iso')
+        country_dummies = pd.get_dummies(self.data['iso_id'], prefix='iso', dtype=int)
         
         # Drop the first country as reference category (to match Stata behavior)
         first_country = country_codes[0]
@@ -92,6 +94,20 @@ class BurkeDataPreparation:
         
         # Add country dummies to the main dataframe
         self.data = pd.concat([self.data, country_dummies], axis=1)
+
+        # Original Stata: i.year (year fixed effects)
+        logger.info("Creating year dummy variables...")
+        year_codes = sorted(self.data['year'].unique())
+        year_dummies = pd.get_dummies(self.data['year'], prefix='year', dtype=int)
+        reference_year = year_codes[0]
+        reference_col = f'year_{reference_year}'
+        if reference_col in year_dummies.columns:
+            year_dummies = year_dummies.drop(columns=[reference_col])
+            logger.info(f"Dropped '{reference_col}' as reference year for dummies")
+        else:
+            logger.warning(f"Reference year column '{reference_col}' not found in year dummies")
+        logger.info(f"Created {len(year_dummies.columns)} year dummy variables")
+        self.data = pd.concat([self.data, year_dummies], axis=1)
         
         logger.info("Data preparation completed")
         return self.data
@@ -102,14 +118,14 @@ class BurkeDataPreparation:
         
         Original Stata code:
         drop _yi_* _y2_* time time2
-        gen time = year - 1985
+        gen time = year - 1960
         gen time2 = time^2
         qui xi i.iso_id*time, pref(_yi_)  //linear country time trends
         qui xi i.iso_id*time2, pref(_y2_) //quadratic country time trend
         qui drop _yi_iso_id* 
         qui drop _y2_iso_id* 
         """
-        logger.info("Creating country-specific time trends...")
+        logger.info("Creating country-specific time trends with reference year 1960...")
         
         # Drop existing trend variables if they exist
         trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
@@ -117,7 +133,13 @@ class BurkeDataPreparation:
             self.data = self.data.drop(columns=trend_cols)
         
         # Prepare all _yi_ and _y2_ columns in one go to avoid fragmentation
-        countries = self.data['iso_id'].unique()
+        countries = sorted(self.data['iso_id'].unique())
+        # Use the same base country as for dummies
+        base_country = countries[0]
+        logger.info(f"Base country for dummies and time trends: {base_country}")
+        # Recreate time variables with 1960 reference
+        self.data['time'] = self.data['year'] - 1960
+        self.data['time2'] = self.data['time'] ** 2
         yi_cols = {}
         y2_cols = {}
         for country in countries:
@@ -128,17 +150,14 @@ class BurkeDataPreparation:
         y2_df = pd.DataFrame(y2_cols, index=self.data.index)
         # Concatenate all at once
         self.data = pd.concat([self.data, yi_df, y2_df], axis=1)
+        # Drop the base country trend columns (like Stata: qui drop _yi_iso_id* and _y2_iso_id*)
+        base_trend_cols = [f'_yi_{base_country}', f'_y2_{base_country}']
+        trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
+        self.data = self.data.drop(columns=[col for col in trend_cols if col in base_trend_cols])
+        logger.info(f"Dropped base country trend columns: {base_trend_cols}")
+        logger.info(f"Created {len(trend_cols) - len(base_trend_cols)} country-specific time trend columns (excluding base)")
         
-        # Drop the base country trends (like Stata: qui drop _yi_iso_id* and _y2_iso_id*)
-        # This removes the base category to avoid multicollinearity
-        base_trends = [col for col in self.data.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
-        if base_trends:
-            self.data = self.data.drop(columns=base_trends)
-        
-        # Defragment DataFrame
-        self.data = self.data.copy()
-        
-        logger.info("Time trends created")
+        logger.info("Time trends created with reference year 1960")
         return self.data
     
     def baseline_regression(self):
@@ -238,6 +257,7 @@ class BurkeDataPreparation:
         logger.info("=== END DIAGNOSTIC ===")
         
         # Run regression with clustering (like Stata: cluster(iso_id))
+        # Original Stata: cluster(iso_id)
         model = OLS(y_clean, X_clean)
         results = model.fit(cov_type='cluster', cov_kwds={'groups': self.data.loc[valid_mask, 'iso_id']})
         
@@ -328,7 +348,7 @@ class BurkeDataPreparation:
         foreach var of loc vars  {
         use data/input/GrowthClimateDataset, clear
         drop _yi_* _y2_* time time2
-        gen time = year - 1985
+        gen time = year - 1960
         gen time2 = time^2
         qui xi i.iso_id*time, pref(_yi_)  //linear country time trends
         qui xi i.iso_id*time2, pref(_y2_) //quadratic country time trend
@@ -354,7 +374,7 @@ class BurkeDataPreparation:
                 
             logger.info(f"Analyzing heterogeneity for {var}...")
             
-            # Recreate time trends for this regression (like Stata: drop _yi_* _y2_* time time2; gen time = year - 1985; etc.)
+            # Recreate time trends for this regression (like Stata: drop _yi_* _y2_* time time2; gen time = year - 1960; etc.)
             self.create_time_trends()
             
             # Prepare data (like Stata: gen temp = UDel_temp_popweight; gen poorWDIppp = (GDPpctile_WDIppp<50); gen interact = poorWDIppp)
@@ -442,7 +462,7 @@ class BurkeDataPreparation:
         Original Stata code:
         use data/input/GrowthClimateDataset, clear
         drop _yi_* _y2_* time time2
-        gen time = year - 1985
+        gen time = year - 1960
         gen time2 = time^2
         qui xi i.iso_id*time, pref(_yi_)  //linear country time trends
         qui xi i.iso_id*time2, pref(_y2_) //quadratic country time trend
@@ -594,12 +614,14 @@ class BurkeDataPreparation:
             # Sample countries with replacement (like Stata: bsample, cl(iso_id))
             sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
             
-            # Create bootstrap sample
+            # Build bootstrap sample with unique boot_cluster_id for each resampled country (idcluster equivalent)
             bootstrap_data = []
+            cluster_counter = 0
             for country in sampled_countries:
                 country_data = self.data[self.data['iso_id'] == country].copy()
+                country_data['boot_cluster_id'] = cluster_counter  # assign new cluster id
                 bootstrap_data.append(country_data)
-            
+                cluster_counter += 1
             bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
             
             # Run regression
@@ -618,7 +640,18 @@ class BurkeDataPreparation:
         
         # Save results
         bootstrap_df = pd.DataFrame(results_list)
-        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_no_lag'], index=False)
+        # Define the exact column order as in Stata (adjust as needed for each bootstrap type)
+        if 'temppoor' in bootstrap_df.columns:
+            column_order = ['run', 'temp', 'temppoor', 'temp2', 'temp2poor', 'prec', 'precpoor', 'prec2', 'prec2poor']
+        else:
+            column_order = ['run', 'temp', 'temp2', 'prec', 'prec2']
+        # Reorder columns if all are present
+        bootstrap_df = bootstrap_df[[col for col in column_order if col in bootstrap_df.columns]]
+        # Replace NaN with '.' for Stata compatibility (optional)
+        bootstrap_df = bootstrap_df.where(pd.notnull(bootstrap_df), '.')
+        # Save with explicit float format and no index, matching Stata's postfile output
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_no_lag'], index=False, float_format='%.8f')
+        logger.info(f"Bootstrap results saved with columns: {bootstrap_df.columns.tolist()} and 8 decimal precision (Stata postfile compatible)")
         logger.info(f"Bootstrap pooled no lag completed: {len(results_list)} successful runs")
     
     def _run_pooled_no_lag_regression(self, data):
@@ -632,54 +665,53 @@ class BurkeDataPreparation:
         """
         # Recreate time trends for this regression
         data_copy = data.copy()
-        
-        # Create time variables
-        data_copy['time'] = data_copy['year'] - 1985
+        # Create time variables with 1960 reference
+        data_copy['time'] = data_copy['year'] - 1960
         data_copy['time2'] = data_copy['time'] ** 2
-        
-        # Create time trends
-        for country in data_copy['iso_id'].unique():
+        # Create time trends (optimized to avoid DataFrame fragmentation)
+        countries = data_copy['iso_id'].unique()
+        yi_cols = {}
+        y2_cols = {}
+        for country in countries:
             mask = data_copy['iso_id'] == country
-            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
         
+        # Add all columns at once to avoid fragmentation
+        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
+        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
+        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
         # Drop base trends
         base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
         if base_trends:
             data_copy = data_copy.drop(columns=base_trends)
-        
         y = data_copy['growthWDI']
-        
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
         iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
         # Prepare X matrix
         regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
                           'UDel_precip_popweight', 'UDel_precip_popweight_2']
         regression_cols.extend(year_cols)
         regression_cols.extend(trend_cols)
         regression_cols.extend(iso_cols)
-        
         # Create X matrix directly from the dataframe
         X = data_copy[regression_cols]
         X = sm.add_constant(X)
-        
         # Remove missing values
         valid_mask = ~(y.isna() | X.isna().any(axis=1))
         y_clean = y[valid_mask]
         X_clean = X[valid_mask]
-        
         # Convert boolean columns to integers
         bool_cols = X_clean.select_dtypes(include=['bool']).columns
         for col in bool_cols:
             X_clean.loc[:, col] = X_clean[col].astype(int)
-        
         # Run regression (like Stata: qui reg growthWDI UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
         model = OLS(y_clean, X_clean)
-        results = model.fit()
-        
+        # Run regression with clustering (like Stata: cluster(iso_id))
+        # Original Stata: cluster(iso_id)
+        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
         return {
             'temp': results.params['UDel_temp_popweight'],
             'temp2': results.params['UDel_temp_popweight_2'],
@@ -735,10 +767,12 @@ class BurkeDataPreparation:
             sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
             
             bootstrap_data = []
+            cluster_counter = 0
             for country in sampled_countries:
                 country_data = self.data[self.data['iso_id'] == country].copy()
+                country_data['boot_cluster_id'] = cluster_counter  # assign new cluster id
                 bootstrap_data.append(country_data)
-            
+                cluster_counter += 1
             bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
             
             try:
@@ -759,7 +793,18 @@ class BurkeDataPreparation:
                 continue
         
         bootstrap_df = pd.DataFrame(results_list)
-        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_rich_poor'], index=False)
+        # Define the exact column order as in Stata (adjust as needed for each bootstrap type)
+        if 'temppoor' in bootstrap_df.columns:
+            column_order = ['run', 'temp', 'temppoor', 'temp2', 'temp2poor', 'prec', 'precpoor', 'prec2', 'prec2poor']
+        else:
+            column_order = ['run', 'temp', 'temp2', 'prec', 'prec2']
+        # Reorder columns if all are present
+        bootstrap_df = bootstrap_df[[col for col in column_order if col in bootstrap_df.columns]]
+        # Replace NaN with '.' for Stata compatibility (optional)
+        bootstrap_df = bootstrap_df.where(pd.notnull(bootstrap_df), '.')
+        # Save with explicit float format and no index, matching Stata's postfile output
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_rich_poor'], index=False, float_format='%.8f')
+        logger.info(f"Bootstrap results saved with columns: {bootstrap_df.columns.tolist()} and 8 decimal precision (Stata postfile compatible)")
         logger.info(f"Bootstrap rich/poor no lag completed: {len(results_list)} successful runs")
     
     def _run_rich_poor_no_lag_regression(self, data):
@@ -775,36 +820,40 @@ class BurkeDataPreparation:
         """
         # Recreate time trends for this regression
         data_copy = data.copy()
-        
-        # Create time variables
-        data_copy['time'] = data_copy['year'] - 1985
+        # Create time variables with 1960 reference
+        data_copy['time'] = data_copy['year'] - 1960
         data_copy['time2'] = data_copy['time'] ** 2
-        
-        # Create time trends
-        for country in data_copy['iso_id'].unique():
+        # Create time trends (optimized to avoid DataFrame fragmentation)
+        countries = data_copy['iso_id'].unique()
+        yi_cols = {}
+        y2_cols = {}
+        for country in countries:
             mask = data_copy['iso_id'] == country
-            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
         
+        # Add all columns at once to avoid fragmentation
+        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
+        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
+        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
         # Drop base trends
         base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
         if base_trends:
             data_copy = data_copy.drop(columns=base_trends)
-        
         y = data_copy['growthWDI']
         poor = data_copy['poorWDIppp']
-        
         # Create interaction terms (like Stata: poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2))
         data_copy['temp_poor'] = data_copy['UDel_temp_popweight'] * poor
         data_copy['temp2_poor'] = data_copy['UDel_temp_popweight_2'] * poor
         data_copy['precip_poor'] = data_copy['UDel_precip_popweight'] * poor
         data_copy['precip2_poor'] = data_copy['UDel_precip_popweight_2'] * poor
-        
+        # Debug: Check interaction terms
+        logger.debug(f"Interaction terms created: temp_poor range [{data_copy['temp_poor'].min():.4f}, {data_copy['temp_poor'].max():.4f}]")
+        logger.debug(f"Poor indicator stats: min={poor.min()}, max={poor.max()}, mean={poor.mean():.3f}, null_count={poor.isna().sum()}")
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
         iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
         # Prepare X matrix
         regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
                           'UDel_precip_popweight', 'UDel_precip_popweight_2',
@@ -812,42 +861,51 @@ class BurkeDataPreparation:
         regression_cols.extend(year_cols)
         regression_cols.extend(trend_cols)
         regression_cols.extend(iso_cols)
-        
         # Create X matrix directly from the dataframe
         X = data_copy[regression_cols]
         X = sm.add_constant(X)
-        
         # Remove missing values
         valid_mask = ~(y.isna() | X.isna().any(axis=1))
         y_clean = y[valid_mask]
         X_clean = X[valid_mask]
-        
         # Convert boolean columns to integers
         bool_cols = X_clean.select_dtypes(include=['bool']).columns
         for col in bool_cols:
             X_clean.loc[:, col] = X_clean[col].astype(int)
-        
         # Run regression (like Stata: qui reg growthWDI poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id)
         model = OLS(y_clean, X_clean)
-        results = model.fit()
-        
+        # Run regression with clustering (like Stata: cluster(iso_id))
+        # Original Stata: cluster(iso_id)
+        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
+        # Extract coefficients with proper error handling
+        coefs = results.params
+        # Debug: Print available coefficients
+        logger.debug(f"Available coefficients in rich/poor no-lag regression: {list(coefs.index)}")
         return {
-            'temp': results.params['UDel_temp_popweight'],
-            'temppoor': results.params.get('temp_poor', 0),
-            'temp2': results.params['UDel_temp_popweight_2'],
-            'temp2poor': results.params.get('temp2_poor', 0),
-            'prec': results.params['UDel_precip_popweight'],
-            'precpoor': results.params.get('precip_poor', 0),
-            'prec2': results.params['UDel_precip_popweight_2'],
-            'prec2poor': results.params.get('precip2_poor', 0)
+            'temp': coefs['UDel_temp_popweight'],
+            'temppoor': coefs['temp_poor'],
+            'temp2': coefs['UDel_temp_popweight_2'],
+            'temp2poor': coefs['temp2_poor'],
+            'prec': coefs['UDel_precip_popweight'],
+            'precpoor': coefs['precip_poor'],
+            'prec2': coefs['UDel_precip_popweight_2'],
+            'prec2poor': coefs['precip2_poor']
         }
     
     def _create_lagged_variables(self, data):
         """Create lagged variables for 5-lag models (L0 through L5)."""
         data_copy = data.copy()
         
-        # Sort by country and year for lagging
+        # Equivalent to Stata: xtset iso_id year
         data_copy = data_copy.sort_values(['iso_id', 'year'])
+        # (Removed logger.info here)
+        
+        # Optional: Check for missing years within each country
+        for country, group in data_copy.groupby('iso_id'):
+            years = group['year'].values
+            missing_years = set(range(years.min(), years.max()+1)) - set(years)
+            if missing_years:
+                logger.warning(f"Country {country} has missing years: {sorted(missing_years)}")
         
         # Create lagged variables for temperature and precipitation
         for lag in range(1, 6):  # L1 through L5
@@ -879,29 +937,31 @@ class BurkeDataPreparation:
         """
         # Create lagged variables
         data_copy = self._create_lagged_variables(data)
-        
         # Recreate time trends for this regression
-        data_copy['time'] = data_copy['year'] - 1985
+        data_copy['time'] = data_copy['year'] - 1960
         data_copy['time2'] = data_copy['time'] ** 2
-        
-        # Create time trends
-        for country in data_copy['iso_id'].unique():
+        # Create time trends (optimized to avoid DataFrame fragmentation)
+        countries = data_copy['iso_id'].unique()
+        yi_cols = {}
+        y2_cols = {}
+        for country in countries:
             mask = data_copy['iso_id'] == country
-            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
         
+        # Add all columns at once to avoid fragmentation
+        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
+        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
+        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
         # Drop base trends
         base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
         if base_trends:
             data_copy = data_copy.drop(columns=base_trends)
-        
         y = data_copy['growthWDI']
-        
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
         iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
         # Prepare X matrix with all lagged variables
         regression_cols = []
         # Current and lagged temperature
@@ -912,38 +972,33 @@ class BurkeDataPreparation:
         regression_cols.extend(['UDel_precip_popweight', 'L1prec', 'L2prec', 'L3prec', 'L4prec', 'L5prec'])
         # Current and lagged precipitation squared
         regression_cols.extend(['UDel_precip_popweight_2', 'L1prec2', 'L2prec2', 'L3prec2', 'L4prec2', 'L5prec2'])
-        
         regression_cols.extend(year_cols)
         regression_cols.extend(trend_cols)
         regression_cols.extend(iso_cols)
-        
         # Create X matrix
         X = data_copy[regression_cols]
         X = sm.add_constant(X)
-        
         # Remove missing values
         valid_mask = ~(y.isna() | X.isna().any(axis=1))
         y_clean = y[valid_mask]
         X_clean = X[valid_mask]
-        
         # Convert boolean columns to integers
         bool_cols = X_clean.select_dtypes(include=['bool']).columns
         for col in bool_cols:
             X_clean.loc[:, col] = X_clean[col].astype(int)
-        
         # Run regression
         model = OLS(y_clean, X_clean)
-        results = model.fit()
-        
+        # Run regression with clustering (like Stata: cluster(iso_id))
+        # Original Stata: cluster(iso_id)
+        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
+        # (Removed logger.info here)
         # Extract coefficients
         coefs = results.params
-        
         # Calculate tlin and tsq (sums of lagged coefficients)
         tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
                 coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
         tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
                coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
-        
         return {
             'temp': coefs['UDel_temp_popweight'],
             'L1temp': coefs['L1temp'],
@@ -973,76 +1028,66 @@ class BurkeDataPreparation:
         """
         # Create lagged variables
         data_copy = self._create_lagged_variables(data)
-        
         # Recreate time trends for this regression
-        data_copy['time'] = data_copy['year'] - 1985
+        data_copy['time'] = data_copy['year'] - 1960
         data_copy['time2'] = data_copy['time'] ** 2
-        
-        # Create time trends
-        for country in data_copy['iso_id'].unique():
+        # Create time trends (optimized to avoid DataFrame fragmentation)
+        countries = data_copy['iso_id'].unique()
+        yi_cols = {}
+        y2_cols = {}
+        for country in countries:
             mask = data_copy['iso_id'] == country
-            data_copy[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            data_copy[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
+            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
+            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
         
+        # Add all columns at once to avoid fragmentation
+        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
+        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
+        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
         # Drop base trends
         base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
         if base_trends:
             data_copy = data_copy.drop(columns=base_trends)
-        
         y = data_copy['growthWDI']
         poor = data_copy['poorWDIppp']
-        
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
         iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
         trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
         # Prepare X matrix with all lagged variables and interactions
         regression_cols = []
         # Current and lagged temperature (rich)
         regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
-        # Current and lagged temperature (poor)
-        regression_cols.extend(['L1temppoor', 'L2temppoor', 'L3temppoor', 'L4temppoor', 'L5temppoor'])
+        # Current and lagged temperature (poor) - need to create current poor interactions
+        data_copy['temppoor'] = data_copy['UDel_temp_popweight'] * poor
+        data_copy['temp2poor'] = data_copy['UDel_temp_popweight_2'] * poor
+        regression_cols.extend(['temppoor', 'L1temppoor', 'L2temppoor', 'L3temppoor', 'L4temppoor', 'L5temppoor'])
         # Current and lagged temperature squared (rich)
         regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
         # Current and lagged temperature squared (poor)
-        regression_cols.extend(['L1temp2poor', 'L2temp2poor', 'L3temp2poor', 'L4temp2poor', 'L5temp2poor'])
-        
+        regression_cols.extend(['temp2poor', 'L1temp2poor', 'L2temp2poor', 'L3temp2poor', 'L4temp2poor', 'L5temp2poor'])
         regression_cols.extend(year_cols)
         regression_cols.extend(trend_cols)
         regression_cols.extend(iso_cols)
-        
         # Create X matrix
         X = data_copy[regression_cols]
         X = sm.add_constant(X)
-        
         # Remove missing values
         valid_mask = ~(y.isna() | X.isna().any(axis=1))
         y_clean = y[valid_mask]
         X_clean = X[valid_mask]
-        
         # Convert boolean columns to integers
         bool_cols = X_clean.select_dtypes(include=['bool']).columns
         for col in bool_cols:
             X_clean.loc[:, col] = X_clean[col].astype(int)
-        
         # Run regression
         model = OLS(y_clean, X_clean)
-        results = model.fit()
-        
+        # Run regression with clustering (like Stata: cluster(iso_id))
+        # Original Stata: cluster(iso_id)
+        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
+        # (Removed logger.info here)
         # Extract coefficients
         coefs = results.params
-        
-        # Calculate tlin and tsq for rich and poor
-        tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
-                coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
-        tlinpoor = (coefs['L1temppoor'] + coefs['L2temppoor'] + coefs['L3temppoor'] + 
-                   coefs['L4temppoor'] + coefs['L5temppoor'])
-        tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
-               coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
-        tsqpoor = (coefs['L1temp2poor'] + coefs['L2temp2poor'] + coefs['L3temp2poor'] + 
-                  coefs['L4temp2poor'] + coefs['L5temp2poor'])
-        
         return {
             'temp': coefs['UDel_temp_popweight'],
             'L1temp': coefs['L1temp'],
@@ -1056,10 +1101,18 @@ class BurkeDataPreparation:
             'L3temp2': coefs['L3temp2'],
             'L4temp2': coefs['L4temp2'],
             'L5temp2': coefs['L5temp2'],
-            'tlin': tlin,
-            'tlinpoor': tlinpoor,
-            'tsq': tsq,
-            'tsqpoor': tsqpoor
+            'temppoor': coefs['temppoor'],
+            'L1temppoor': coefs['L1temppoor'],
+            'L2temppoor': coefs['L2temppoor'],
+            'L3temppoor': coefs['L3temppoor'],
+            'L4temppoor': coefs['L4temppoor'],
+            'L5temppoor': coefs['L5temppoor'],
+            'temp2poor': coefs['temp2poor'],
+            'L1temp2poor': coefs['L1temp2poor'],
+            'L2temp2poor': coefs['L2temp2poor'],
+            'L3temp2poor': coefs['L3temp2poor'],
+            'L4temp2poor': coefs['L4temp2poor'],
+            'L5temp2poor': coefs['L5temp2poor']
         }
     
     def _bootstrap_pooled_5_lag(self, countries, n_countries):
@@ -1100,12 +1153,14 @@ class BurkeDataPreparation:
                 # Sample countries with replacement
                 sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
                 
-                # Create bootstrap sample
+                # Build bootstrap sample with unique boot_cluster_id for each resampled country (idcluster equivalent)
                 bootstrap_data = []
+                cluster_counter = 0
                 for country in sampled_countries:
                     country_data = self.data[self.data['iso_id'] == country].copy()
+                    country_data['boot_cluster_id'] = cluster_counter  # assign new cluster id
                     bootstrap_data.append(country_data)
-                
+                    cluster_counter += 1
                 bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
                 
                 # Run regression
@@ -1118,7 +1173,18 @@ class BurkeDataPreparation:
                 continue
         
         bootstrap_df = pd.DataFrame(results_list)
-        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_5_lag'], index=False)
+        # Define the exact column order as in Stata (adjust as needed for each bootstrap type)
+        if 'L1temp' in bootstrap_df.columns:
+            column_order = ['run', 'temp', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp', 'temp2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2']
+        else:
+            column_order = ['run', 'temp', 'temp2', 'prec', 'prec2']
+        # Reorder columns if all are present
+        bootstrap_df = bootstrap_df[[col for col in column_order if col in bootstrap_df.columns]]
+        # Replace NaN with '.' for Stata compatibility (optional)
+        bootstrap_df = bootstrap_df.where(pd.notnull(bootstrap_df), '.')
+        # Save with explicit float format and no index, matching Stata's postfile output
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_5_lag'], index=False, float_format='%.8f')
+        logger.info(f"Bootstrap results saved with columns: {bootstrap_df.columns.tolist()} and 8 decimal precision (Stata postfile compatible)")
         logger.info(f"Bootstrap pooled 5 lag completed: {len(results_list)} successful runs")
     
     def _bootstrap_rich_poor_5_lag(self, countries, n_countries):
@@ -1143,8 +1209,6 @@ class BurkeDataPreparation:
         bsample, cl(iso_id) idcluster(id) //draw a sample of countries with replacement
         qui xtset id year  //need to use the new cluster variable it creates. 
         qui gen UDel_temp_popweight_2 = UDel_temp_popweight^2	
-        qui gen poor = (GDPpctile_WDIppp<50)
-        qui replace poor=. if GDPpctile_WDIppp==.
         qui reg growthWDI poor#c.(L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2)) i.year _yi_* _y2_* i.iso_id 
         mat b = e(b)
         post boot (`nn') (b[1,1]) (b[1,2]) (b[1,3]) (b[1,4]) (b[1,5]) (b[1,6]) (b[1,7]) (b[1,8]) (b[1,9]) (b[1,10]) (b[1,11]) (b[1,12]) (b[1,13]) (b[1,14]) (b[1,15]) (b[1,16]) (b[1,17]) (b[1,18]) (b[1,19]) (b[1,20]) (b[1,21]) (b[1,22]) (b[1,23]) (b[1,24])
@@ -1165,12 +1229,14 @@ class BurkeDataPreparation:
                 # Sample countries with replacement
                 sampled_countries = np.random.choice(countries, size=n_countries, replace=True)
                 
-                # Create bootstrap sample
+                # Build bootstrap sample with unique boot_cluster_id for each resampled country (idcluster equivalent)
                 bootstrap_data = []
+                cluster_counter = 0
                 for country in sampled_countries:
                     country_data = self.data[self.data['iso_id'] == country].copy()
+                    country_data['boot_cluster_id'] = cluster_counter  # assign new cluster id
                     bootstrap_data.append(country_data)
-                
+                    cluster_counter += 1
                 bootstrap_sample = pd.concat(bootstrap_data, ignore_index=True)
                 
                 # Run regression
@@ -1182,8 +1248,25 @@ class BurkeDataPreparation:
                 logger.warning(f"Bootstrap run {run} failed: {e}")
                 continue
         
+        # DEBUG: Print all unique keys in results_list before DataFrame creation
+        all_keys = set()
+        for d in results_list:
+            all_keys.update(d.keys())
+        print(f"DEBUG: Unique keys in results_list before DataFrame creation: {sorted(all_keys)}")
+        
         bootstrap_df = pd.DataFrame(results_list)
-        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_rich_poor_5_lag'], index=False)
+        # Define the exact column order as in Stata (adjust as needed for each bootstrap type)
+        if 'temppoor' in bootstrap_df.columns:
+            column_order = ['run', 'temp', 'temppoor', 'L1temp', 'L1temppoor', 'L2temp', 'L2temppoor', 'L3temp', 'L3temppoor', 'L4temp', 'L4temppoor', 'L5temp', 'L5temppoor', 'temp2', 'temp2poor', 'L1temp2', 'L1temp2poor', 'L2temp2', 'L2temp2poor', 'L3temp2', 'L3temp2poor', 'L4temp2', 'L4temp2poor', 'L5temp2', 'L5temp2poor']
+        else:
+            column_order = ['run', 'temp', 'temp2', 'prec', 'prec2']
+        # Reorder columns if all are present
+        bootstrap_df = bootstrap_df[[col for col in column_order if col in bootstrap_df.columns]]
+        # Replace NaN with '.' for Stata compatibility (optional)
+        bootstrap_df = bootstrap_df.where(pd.notnull(bootstrap_df), '.')
+        # Save with explicit float format and no index, matching Stata's postfile output
+        bootstrap_df.to_csv(OUTPUT_FILES['bootstrap_rich_poor_5_lag'], index=False, float_format='%.8f')
+        logger.info(f"Bootstrap results saved with columns: {bootstrap_df.columns.tolist()} and 8 decimal precision (Stata postfile compatible)")
         logger.info(f"Bootstrap rich/poor 5 lag completed: {len(results_list)} successful runs")
     
     def save_main_dataset(self):

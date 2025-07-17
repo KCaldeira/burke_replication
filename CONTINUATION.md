@@ -210,6 +210,35 @@
 6. **Country Code Mapping:** Enhanced compatibility across datasets
 
 ---
+
+## Critical Methodological Differences to Address (as of 2024-07-12)
+
+The following issues have been identified as key differences between this replication and the original Burke et al. (2015) code. These must be addressed to ensure a faithful replication:
+
+1. **Missing year dummy variables**
+   - Year dummies (i.year) are not created or included in regressions, omitting global year effects.
+2. **Wrong reference year for time trends**
+   - The code uses 1985 as the reference year for time trends, but the original uses 1960.
+3. **Missing clustering in bootstrap regressions**
+   - Bootstrap regressions do not use clustered standard errors by iso_id, unlike the baseline regression and original Stata code.
+4. **Inconsistent bootstrap sampling implementation**
+   - The Python bootstrap samples countries manually, which may not exactly match Stata's `bsample, cl(iso_id)` behavior.
+5. **Missing `idcluster(id)` in 5-lag bootstrap**
+   - The 5-lag bootstrap does not create a new cluster ID variable as in Stata's `idcluster(id)` option.
+6. **Different coefficient extraction methods**
+   - The Python code uses `.get()` with fallback to 0 for some coefficients, which may not match Stata's matrix extraction.
+7. **Missing proper panel structure setup for lags**
+   - The code does not explicitly set up the panel structure (`xtset iso_id year`) as in Stata, which could affect lag creation.
+8. **Potential differences in time trend creation**
+   - Manual creation of country-specific time trends may not be fully equivalent to Stata's `xi` command.
+9. **Missing `postfile` structure for bootstrap output**
+   - The output format and precision may differ from Stata's `postfile`/`post boot` approach.
+
+**Next Steps:**
+- Address these issues one by one, starting with year dummies and reference year.
+- After each fix, re-run the pipeline and compare results to the original study.
+
+---
 *Last Updated: 2025-07-12*
 *Session Status: ✅ FULL PIPELINE COMPLETED SUCCESSFULLY*
 *Next: Results verification and production configuration* 

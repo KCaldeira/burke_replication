@@ -571,9 +571,11 @@ class ImpactProjections:
             for b in range(n_bootstrap):
                 coefs = bootstrap_coefs.iloc[b]
                 
-                # Get tlin and tsq coefficients (sums of lagged coefficients)
-                tlin_coef = coefs['tlin']
-                tsq_coef = coefs['tsq']
+                # Calculate tlin and tsq coefficients (sums of lagged coefficients)
+                tlin_coef = (coefs['temp'] + coefs['L1temp'] + coefs['L2temp'] + 
+                            coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+                tsq_coef = (coefs['temp2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+                           coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
                 
                 # Original R code: bg = prj$tlin[tt]*temp + prj$tsq[tt]*temp*temp
                 # Calculate baseline growth level for each country's temperature
@@ -678,11 +680,15 @@ class ImpactProjections:
             for b in range(n_bootstrap):
                 coefs = bootstrap_coefs.iloc[b]
                 
-                # Get tlin and tsq coefficients for rich and poor
-                tlin_coef = coefs['tlin']
-                tlin_poor_coef = coefs['tlinpoor']
-                tsq_coef = coefs['tsq']
-                tsq_poor_coef = coefs['tsqpoor']
+                # Calculate tlin and tsq coefficients for rich and poor (sums of lagged coefficients)
+                tlin_coef = (coefs['temp'] + coefs['L1temp'] + coefs['L2temp'] + 
+                            coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+                tsq_coef = (coefs['temp2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+                           coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+                tlin_poor_coef = (coefs['L1temppoor'] + coefs['L2temppoor'] + coefs['L3temppoor'] + 
+                                 coefs['L4temppoor'] + coefs['L5temppoor'])
+                tsq_poor_coef = (coefs['L1temp2poor'] + coefs['L2temp2poor'] + coefs['L3temp2poor'] + 
+                                coefs['L4temp2poor'] + coefs['L5temp2poor'])
                 
                 # Project year by year
                 for year_idx in range(1, n_years):
