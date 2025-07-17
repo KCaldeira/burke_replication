@@ -446,14 +446,77 @@ class FigureGeneration:
         """Create Figure 3: Projection results."""
         logger.info("Creating Figure 3...")
         
-        # This would load projection results and create time series plots
-        # For now, create a placeholder
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.text(0.5, 0.5, 'Figure 3: Projection Results\n(Implementation pending)', 
-                ha='center', va='center', transform=ax.transAxes, fontsize=14)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
+        # Load projection data
+        output_dir = OUTPUT_PATH / "projectionOutput"
+        
+        # Create figure with subplots - 2x3 layout for 2 models x 3 scenarios
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Figure 3: GDP per Capita Projections', fontsize=16)
+        
+        # Define scenarios and models to plot
+        scenarios = ['base', 'SSP3', 'SSP5']
+        models = ['pooled', 'richpoor']
+        
+        # Colors for different scenarios
+        colors = {'base': 'blue', 'SSP3': 'green', 'SSP5': 'red'}
+        
+        for i, model in enumerate(models):
+            for j, scenario in enumerate(scenarios):
+                ax = axes[i, j]
+                
+                # Load global changes data
+                global_file = output_dir / f"GlobalChanges_{model}_{scenario}.pkl"
+                
+                if global_file.exists():
+                    with open(global_file, 'rb') as f:
+                        global_data = pickle.load(f)
+                    
+                    # Extract years and data
+                    years = list(range(2010, 2100))
+                    
+                    # Get mean values across bootstrap replicates
+                    if len(global_data.shape) == 3:  # Bootstrap replicates
+                        gdp_cc_mean = np.mean(global_data[:, :, 0], axis=0)  # With climate change
+                        gdp_nocc_mean = np.mean(global_data[:, :, 1], axis=0)  # Without climate change
+                        
+                        # Calculate confidence intervals
+                        gdp_cc_ci = np.percentile(global_data[:, :, 0], [5, 95], axis=0)
+                        gdp_nocc_ci = np.percentile(global_data[:, :, 1], [5, 95], axis=0)
+                    else:  # Single estimate
+                        gdp_cc_mean = global_data[:, 0]
+                        gdp_nocc_mean = global_data[:, 1]
+                        gdp_cc_ci = None
+                        gdp_nocc_ci = None
+                    
+                    # Plot with climate change
+                    ax.plot(years, gdp_cc_mean, color=colors[scenario], linewidth=2, 
+                           label=f'{scenario} (with CC)')
+                    
+                    # Plot without climate change
+                    ax.plot(years, gdp_nocc_mean, color=colors[scenario], linewidth=2, 
+                           linestyle='--', label=f'{scenario} (no CC)')
+                    
+                    # Add confidence intervals if available
+                    if gdp_cc_ci is not None:
+                        ax.fill_between(years, gdp_cc_ci[0], gdp_cc_ci[1], 
+                                      alpha=0.2, color=colors[scenario])
+                        ax.fill_between(years, gdp_nocc_ci[0], gdp_nocc_ci[1], 
+                                      alpha=0.2, color=colors[scenario])
+                    
+                    ax.set_xlabel('Year')
+                    ax.set_ylabel('GDP per Capita')
+                    ax.set_title(f'{model.title()} Model - {scenario.upper()}')
+                    ax.grid(True, alpha=0.3)
+                    ax.legend()
+                    
+                    # Format y-axis as currency
+                    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+                else:
+                    ax.text(0.5, 0.5, f'No data for {model}_{scenario}', 
+                           ha='center', va='center', transform=ax.transAxes)
+                    ax.set_title(f'{model.title()} Model - {scenario.upper()}')
+        
+        plt.tight_layout()
         
         # Save figure
         fig_path = FIGURES_PATH / "Figure3.pdf"
@@ -466,14 +529,77 @@ class FigureGeneration:
         """Create Figure 4: Additional projection results."""
         logger.info("Creating Figure 4...")
         
-        # This would load projection results and create additional plots
-        # For now, create a placeholder
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.text(0.5, 0.5, 'Figure 4: Additional Projection Results\n(Implementation pending)', 
-                ha='center', va='center', transform=ax.transAxes, fontsize=14)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
+        # Load projection data
+        output_dir = OUTPUT_PATH / "projectionOutput"
+        
+        # Create figure with subplots - 2x3 layout for 2 models x 3 scenarios
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Figure 4: Climate Change Impact Analysis', fontsize=16)
+        
+        # Define scenarios and models to plot
+        scenarios = ['base', 'SSP3', 'SSP5']
+        models = ['pooled', 'richpoor']
+        
+        # Colors for different scenarios
+        colors = {'base': 'blue', 'SSP3': 'green', 'SSP5': 'red'}
+        
+        for i, model in enumerate(models):
+            for j, scenario in enumerate(scenarios):
+                ax = axes[i, j]
+                
+                # Load global changes data
+                global_file = output_dir / f"GlobalChanges_{model}_{scenario}.pkl"
+                
+                if global_file.exists():
+                    with open(global_file, 'rb') as f:
+                        global_data = pickle.load(f)
+                    
+                    # Extract years and data
+                    years = list(range(2010, 2100))
+                    
+                    # Get mean values across bootstrap replicates
+                    if len(global_data.shape) == 3:  # Bootstrap replicates
+                        gdp_cc_mean = np.mean(global_data[:, :, 0], axis=0)  # With climate change
+                        gdp_nocc_mean = np.mean(global_data[:, :, 1], axis=0)  # Without climate change
+                        
+                        # Calculate percentage change
+                        pct_change = ((gdp_cc_mean - gdp_nocc_mean) / gdp_nocc_mean) * 100
+                        
+                        # Calculate confidence intervals for percentage change
+                        pct_change_bootstrap = ((global_data[:, :, 0] - global_data[:, :, 1]) / global_data[:, :, 1]) * 100
+                        pct_change_ci = np.percentile(pct_change_bootstrap, [5, 95], axis=0)
+                    else:  # Single estimate
+                        gdp_cc_mean = global_data[:, 0]
+                        gdp_nocc_mean = global_data[:, 1]
+                        pct_change = ((gdp_cc_mean - gdp_nocc_mean) / gdp_nocc_mean) * 100
+                        pct_change_ci = None
+                    
+                    # Plot percentage change
+                    ax.plot(years, pct_change, color=colors[scenario], linewidth=2, 
+                           label=f'{scenario}')
+                    
+                    # Add confidence intervals if available
+                    if pct_change_ci is not None:
+                        ax.fill_between(years, pct_change_ci[0], pct_change_ci[1], 
+                                      alpha=0.2, color=colors[scenario])
+                    
+                    # Add zero line for reference
+                    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                    
+                    ax.set_xlabel('Year')
+                    ax.set_ylabel('GDP per Capita Change (%)')
+                    ax.set_title(f'{model.title()} Model - {scenario.upper()}')
+                    ax.grid(True, alpha=0.3)
+                    ax.legend()
+                    
+                    # Format y-axis as percentage
+                    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}%'))
+                else:
+                    ax.text(0.5, 0.5, f'No data for {model}_{scenario}', 
+                           ha='center', va='center', transform=ax.transAxes)
+                    ax.set_title(f'{model.title()} Model - {scenario.upper()}')
+        
+        plt.tight_layout()
         
         # Save figure
         fig_path = FIGURES_PATH / "Figure4.pdf"
