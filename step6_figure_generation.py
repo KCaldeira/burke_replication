@@ -217,6 +217,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from config import *
+import matplotlib.ticker as mticker
 
 logger = logging.getLogger(__name__)
 
@@ -304,20 +305,24 @@ class FigureGeneration:
         """Plot global response function."""
         if self.response_data is None:
             return
-        
+        # Diagnostic: print data types and head
+        print("[DIAG] _plot_global_response: response_data columns:", self.response_data.columns.tolist())
+        print("[DIAG] _plot_global_response: x head:", self.response_data['x'].head())
+        print("[DIAG] _plot_global_response: estimate head:", self.response_data['estimate'].head())
+        print("[DIAG] _plot_global_response: min90 head:", self.response_data['min90'].head())
+        print("[DIAG] _plot_global_response: max90 head:", self.response_data['max90'].head())
         # Center response at optimum
         max_response = self.response_data['estimate'].max()
         centered_estimate = self.response_data['estimate'] - max_response
         centered_min90 = self.response_data['min90'] - max_response
         centered_max90 = self.response_data['max90'] - max_response
-        
+        # Diagnostic: print centered values
+        print("[DIAG] _plot_global_response: centered_estimate head:", centered_estimate.head())
         # Plot confidence interval
         ax.fill_between(self.response_data['x'], centered_min90, centered_max90, 
                        alpha=0.3, color='lightblue', label='90% CI')
-        
         # Plot main effect
         ax.plot(self.response_data['x'], centered_estimate, 'b-', linewidth=2, label='Response')
-        
         # Add country temperature lines
         if self.main_data is not None:
             countries = ['USA', 'CHN', 'DEU', 'JPN', 'IND', 'NGA', 'IDN', 'BRA', 'FRA', 'GBR']
@@ -325,8 +330,8 @@ class FigureGeneration:
                 country_data = self.main_data[self.main_data['iso'] == country]
                 if not country_data.empty:
                     avg_temp = country_data['UDel_temp_popweight'].mean()
+                    print(f"[DIAG] _plot_global_response: {country} avg_temp: {avg_temp}")
                     ax.axvline(x=avg_temp, color='gray', alpha=0.5, linewidth=0.5)
-        
         ax.set_xlim(-2, 30)
         ax.set_ylim(-0.4, 0.1)
         ax.set_xlabel('Temperature (°C)')
@@ -338,23 +343,23 @@ class FigureGeneration:
         """Plot rich vs poor heterogeneity."""
         if self.heterogeneity_data is None:
             return
-        
-        # Filter for growthWDI model
+        # Diagnostic: print data types and head
+        print("[DIAG] _plot_rich_poor_heterogeneity: heterogeneity_data columns:", self.heterogeneity_data.columns.tolist())
         data = self.heterogeneity_data[self.heterogeneity_data['model'] == 'growthWDI']
         data = data[data['x'] >= 5]  # Drop estimates below 5°C
-        
+        print("[DIAG] _plot_rich_poor_heterogeneity: filtered data head:", data.head())
         # Plot poor countries
         poor_data = data[data['interact'] == 1]
+        print("[DIAG] _plot_rich_poor_heterogeneity: poor_data head:", poor_data.head())
         if not poor_data.empty:
             ax.fill_between(poor_data['x'], poor_data['min90'], poor_data['max90'], 
                            alpha=0.3, color='lightblue')
             ax.plot(poor_data['x'], poor_data['estimate'], 'b-', linewidth=2, label='Poor')
-        
         # Plot rich countries
         rich_data = data[data['interact'] == 0]
+        print("[DIAG] _plot_rich_poor_heterogeneity: rich_data head:", rich_data.head())
         if not rich_data.empty:
             ax.plot(rich_data['x'], rich_data['estimate'], 'r-', linewidth=2, label='Rich')
-        
         ax.set_xlim(5, 30)
         ax.set_ylim(-0.35, 0.1)
         ax.set_xlabel('Temperature (°C)')
@@ -366,19 +371,21 @@ class FigureGeneration:
         """Plot temporal heterogeneity."""
         if self.temporal_data is None:
             return
-        
+        # Diagnostic: print data types and head
+        print("[DIAG] _plot_temporal_heterogeneity: temporal_data columns:", self.temporal_data.columns.tolist())
+        print("[DIAG] _plot_temporal_heterogeneity: temporal_data head:", self.temporal_data.head())
         # Plot early period
         early_data = self.temporal_data[self.temporal_data['interact'] == 1]
+        print("[DIAG] _plot_temporal_heterogeneity: early_data head:", early_data.head())
         if not early_data.empty:
             ax.fill_between(early_data['x'], early_data['min90'], early_data['max90'], 
                            alpha=0.3, color='lightblue')
             ax.plot(early_data['x'], early_data['estimate'], 'b-', linewidth=2, label='Early')
-        
         # Plot late period
         late_data = self.temporal_data[self.temporal_data['interact'] == 0]
+        print("[DIAG] _plot_temporal_heterogeneity: late_data head:", late_data.head())
         if not late_data.empty:
             ax.plot(late_data['x'], late_data['estimate'], 'r-', linewidth=2, label='Late')
-        
         ax.set_xlim(5, 30)
         ax.set_ylim(-0.35, 0.1)
         ax.set_xlabel('Temperature (°C)')
@@ -390,23 +397,23 @@ class FigureGeneration:
         """Plot agricultural heterogeneity."""
         if self.heterogeneity_data is None:
             return
-        
-        # Filter for agricultural model
+        # Diagnostic: print data types and head
+        print("[DIAG] _plot_agricultural_heterogeneity: heterogeneity_data columns:", self.heterogeneity_data.columns.tolist())
         data = self.heterogeneity_data[self.heterogeneity_data['model'] == 'AgrGDPgrowthCap']
         data = data[data['x'] >= 5]
-        
+        print("[DIAG] _plot_agricultural_heterogeneity: filtered data head:", data.head())
         # Plot poor countries
         poor_data = data[data['interact'] == 1]
+        print("[DIAG] _plot_agricultural_heterogeneity: poor_data head:", poor_data.head())
         if not poor_data.empty:
             ax.fill_between(poor_data['x'], poor_data['min90'], poor_data['max90'], 
                            alpha=0.3, color='lightblue')
             ax.plot(poor_data['x'], poor_data['estimate'], 'b-', linewidth=2, label='Poor')
-        
         # Plot rich countries
         rich_data = data[data['interact'] == 0]
+        print("[DIAG] _plot_agricultural_heterogeneity: rich_data head:", rich_data.head())
         if not rich_data.empty:
             ax.plot(rich_data['x'], rich_data['estimate'], 'r-', linewidth=2, label='Rich')
-        
         ax.set_xlim(5, 30)
         ax.set_ylim(-0.35, 0.1)
         ax.set_xlabel('Temperature (°C)')
@@ -418,23 +425,23 @@ class FigureGeneration:
         """Plot non-agricultural heterogeneity."""
         if self.heterogeneity_data is None:
             return
-        
-        # Filter for non-agricultural model
+        # Diagnostic: print data types and head
+        print("[DIAG] _plot_non_agricultural_heterogeneity: heterogeneity_data columns:", self.heterogeneity_data.columns.tolist())
         data = self.heterogeneity_data[self.heterogeneity_data['model'] == 'NonAgrGDPgrowthCap']
         data = data[data['x'] >= 5]
-        
+        print("[DIAG] _plot_non_agricultural_heterogeneity: filtered data head:", data.head())
         # Plot poor countries
         poor_data = data[data['interact'] == 1]
+        print("[DIAG] _plot_non_agricultural_heterogeneity: poor_data head:", poor_data.head())
         if not poor_data.empty:
             ax.fill_between(poor_data['x'], poor_data['min90'], poor_data['max90'], 
                            alpha=0.3, color='lightblue')
             ax.plot(poor_data['x'], poor_data['estimate'], 'b-', linewidth=2, label='Poor')
-        
         # Plot rich countries
         rich_data = data[data['interact'] == 0]
+        print("[DIAG] _plot_non_agricultural_heterogeneity: rich_data head:", rich_data.head())
         if not rich_data.empty:
             ax.plot(rich_data['x'], rich_data['estimate'], 'r-', linewidth=2, label='Rich')
-        
         ax.set_xlim(5, 30)
         ax.set_ylim(-0.35, 0.1)
         ax.set_xlabel('Temperature (°C)')
@@ -488,6 +495,10 @@ class FigureGeneration:
                         gdp_cc_ci = None
                         gdp_nocc_ci = None
                     
+                    # DIAGNOSTIC: Print types, shapes, and head of data to be plotted
+                    print(f"[DIAG] Figure 3: years type={type(years)}, len={len(years)}, head={years[:5]}")
+                    print(f"[DIAG] Figure 3: gdp_cc_mean type={type(gdp_cc_mean)}, shape={getattr(gdp_cc_mean, 'shape', 'NA')}, head={gdp_cc_mean[:5]}")
+                    print(f"[DIAG] Figure 3: gdp_nocc_mean type={type(gdp_nocc_mean)}, shape={getattr(gdp_nocc_mean, 'shape', 'NA')}, head={gdp_nocc_mean[:5]}")
                     # Plot with climate change
                     ax.plot(years, gdp_cc_mean, color=colors[scenario], linewidth=2, 
                            label=f'{scenario} (with CC)')
@@ -498,6 +509,8 @@ class FigureGeneration:
                     
                     # Add confidence intervals if available
                     if gdp_cc_ci is not None:
+                        print(f"[DIAG] Figure 3: gdp_cc_ci type={type(gdp_cc_ci)}, shape={gdp_cc_ci.shape}, head={gdp_cc_ci[:, :5]}")
+                        print(f"[DIAG] Figure 3: gdp_nocc_ci type={type(gdp_nocc_ci)}, shape={gdp_nocc_ci.shape}, head={gdp_nocc_ci[:, :5]}")
                         ax.fill_between(years, gdp_cc_ci[0], gdp_cc_ci[1], 
                                       alpha=0.2, color=colors[scenario])
                         ax.fill_between(years, gdp_nocc_ci[0], gdp_nocc_ci[1], 
@@ -509,8 +522,13 @@ class FigureGeneration:
                     ax.grid(True, alpha=0.3)
                     ax.legend()
                     
-                    # Format y-axis as currency
-                    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+                    # Use scientific notation for large values
+                    max_val = max(np.max(gdp_cc_mean), np.max(gdp_nocc_mean))
+                    if max_val > 1e6:
+                        ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
+                        ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+                    else:
+                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
                 else:
                     ax.text(0.5, 0.5, f'No data for {model}_{scenario}', 
                            ha='center', va='center', transform=ax.transAxes)
