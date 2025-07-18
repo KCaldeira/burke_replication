@@ -260,12 +260,20 @@
 
 ---
 
-## Critical Methodological Differences to Address (as of 2024-07-12)
-
-The following issues have been identified as key differences between this replication and the original Burke et al. (2015) code. These must be addressed to ensure a faithful replication:
-
-
 ---
 *Last Updated: 2025-01-27*
 *Session Status: ✅ FULL PIPELINE COMPLETED SUCCESSFULLY*
 *Next: Fix PDF output issues, then results verification and production configuration* 
+
+### PDF Output and Figure Quality Issues - Progress Update (2024-07-12)
+
+- **Figure 3 Axis Label Issue:**
+  - Diagnosed the problem as axis labels being cluttered with large numbers for SSP3 and SSP5 scenarios.
+  - Implemented scientific notation for y-axis labels when values exceed 1e6, improving figure readability.
+  - Diagnostic code confirmed that data shapes and types are correct; the issue was purely with axis formatting.
+
+- **Next Challenge:**
+  - The values for SSP3 and SSP5 in Figure 3 are extremely large ("blowing up").
+  - **Next step:** Systematically diagnose why the GDP per capita projections for these scenarios are so high, focusing on the underlying data and projection logic.
+
+--- 
