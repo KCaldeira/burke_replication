@@ -2,6 +2,8 @@
 
 This project converts the original R and Stata code from Burke, Hsiang, and Miguel (2015) "Global non-linear effect of temperature on economic production" to Python.
 
+The translation from Stata and R to python was done by Ken Caldeira with the help of Cursor. Use at your own risk. This translation could contain errors.  If you find any mistake, please let me know (caldeira@stanford.edu).
+
 ## Project Overview
 
 The original analysis examines the relationship between temperature and economic growth using historical data and projects future impacts under climate change scenarios. This Python implementation maintains the same processing steps and methodology while providing a modern, reproducible framework.
