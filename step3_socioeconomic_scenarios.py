@@ -380,6 +380,11 @@ class SocioeconomicScenarios:
         """
         logger.info("Processing population projections...")
         
+        # Fix SSP4 scenario name (original R code fix)
+        if 'Scenario' in self.pop_data.columns:
+            self.pop_data['Scenario'] = self.pop_data['Scenario'].replace('SSP4d_v9_130115', 'SSP4_v9_130115')
+            logger.info("Fixed SSP4 scenario name from SSP4d_v9_130115 to SSP4_v9_130115")
+        
         # Interpolate population data
         years = list(range(2010, 2100))  # 2010-2099
         pop_interpolated = self.interpolate_projections(self.pop_data, years)

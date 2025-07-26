@@ -341,7 +341,7 @@ class ImpactProjections:
                     
                     # Original R code: basegrowth <- growthproj[,which(names(growthproj)==y)]
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Original R code: GDPcapNoCC[,i,tt] = GDPcapNoCC[,j,tt]*(1+basegrowth)
                     # Project GDP without climate change
@@ -458,7 +458,7 @@ class ImpactProjections:
                     prev_year = PROJECTION_YEARS[year_idx - 1]
                     
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Project GDP without climate change
                     gdp_cap_no_cc[:, year_idx, b] = gdp_cap_no_cc[:, year_idx - 1, b] * (1 + growth_rate)
@@ -587,7 +587,7 @@ class ImpactProjections:
                     prev_year = PROJECTION_YEARS[year_idx - 1]
                     
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Project GDP without climate change
                     gdp_cap_no_cc[:, year_idx, b] = gdp_cap_no_cc[:, year_idx - 1, b] * (1 + growth_rate)
@@ -696,7 +696,7 @@ class ImpactProjections:
                     prev_year = PROJECTION_YEARS[year_idx - 1]
                     
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Project GDP without climate change
                     gdp_cap_no_cc[:, year_idx, b] = gdp_cap_no_cc[:, year_idx - 1, b] * (1 + growth_rate)

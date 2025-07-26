@@ -290,7 +290,7 @@ class DamageFunction:
                     year = years[year_idx]
                     
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Project GDP without climate change
                     gdp_cap_no_cc = gdp_cap_no_cc * (1 + growth_rate)
@@ -389,7 +389,7 @@ class DamageFunction:
                     year = years[year_idx]
                     
                     # Get growth rate without climate change
-                    growth_rate = growth_proj[year].values
+                    growth_rate = growth_proj[year].values / 100
                     
                     # Project GDP without climate change
                     gdp_cap_no_cc = gdp_cap_no_cc * (1 + growth_rate)
