@@ -9,12 +9,42 @@ from pathlib import Path
 # Project paths - ensure they're always relative to this config file
 PROJECT_ROOT = Path(__file__).parent.absolute()
 DATA_PATH = PROJECT_ROOT / "data"
-OUTPUT_PATH = PROJECT_ROOT / "data" / "output"
-FIGURES_PATH = PROJECT_ROOT / "figures"
+
+# Create timestamped output directory
+from datetime import datetime
+
+def get_run_timestamp():
+    """Get or create a consistent timestamp for this run."""
+    # Check if we already have a timestamp file from a previous step
+    timestamp_file = PROJECT_ROOT / ".current_run_timestamp"
+    if timestamp_file.exists():
+        with open(timestamp_file, 'r') as f:
+            return f.read().strip()
+    else:
+        # Create new timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with open(timestamp_file, 'w') as f:
+            f.write(timestamp)
+        return timestamp
+
+# Get consistent timestamp for this run
+timestamp = get_run_timestamp()
+OUTPUT_PATH = PROJECT_ROOT / "data" / f"output_{timestamp}"
+FIGURES_PATH = PROJECT_ROOT / "data" / f"figures_{timestamp}"
 
 # Create directories if they don't exist
 for path in [DATA_PATH, OUTPUT_PATH, FIGURES_PATH]:
     path.mkdir(exist_ok=True)
+
+# Store timestamp for logging
+CURRENT_TIMESTAMP = timestamp
+
+def cleanup_timestamp_file():
+    """Clean up the timestamp file to start a fresh run."""
+    timestamp_file = PROJECT_ROOT / ".current_run_timestamp"
+    if timestamp_file.exists():
+        timestamp_file.unlink()
+        print(f"Cleaned up timestamp file: {timestamp_file}")
 
 # Processing flags
 SKIP_STEP_1 = False  # Skip data preparation and initial analysis (Step 1 completed)
@@ -76,7 +106,7 @@ OUTPUT_FILES = {
 (OUTPUT_PATH / "bootstrap").mkdir(exist_ok=True)
 (OUTPUT_PATH / "projectionOutput").mkdir(exist_ok=True)
 
-def setup_logging(verbosity_level=VERBOSITY_LEVEL):
+def setup_logging(verbosity_level=VERBOSITY_LEVEL, timestamp=None):
     """Set up logging based on verbosity level."""
     if verbosity_level == 0:
         # Quiet mode - only errors
@@ -99,12 +129,39 @@ def setup_logging(verbosity_level=VERBOSITY_LEVEL):
         log_level = logging.INFO
         format_str = '%(asctime)s - %(levelname)s - %(message)s'
     
+    # Use provided timestamp or use the current run timestamp
+    if timestamp is None:
+        timestamp = CURRENT_TIMESTAMP
+    log_filename = f"burke_replication_{timestamp}.log"
+    log_filepath = PROJECT_ROOT / log_filename
+    
+    # Clear any existing handlers to avoid duplicates
+    logging.getLogger().handlers.clear()
+    
+    # Create formatter
+    formatter = logging.Formatter(format_str)
+    
+    # Create file handler
+    file_handler = logging.FileHandler(log_filepath, mode='w', encoding='utf-8')
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    
+    # Configure root logger
     logging.basicConfig(
         level=log_level,
-        format=format_str,
-        handlers=[
-            logging.FileHandler('burke_replication.log'),
-            logging.StreamHandler()
-        ]
+        handlers=[file_handler, console_handler],
+        force=True
     )
-    return logging.getLogger(__name__) 
+    
+    # Get logger for this module
+    logger = logging.getLogger(__name__)
+    logger.info(f"Logging initialized. Log file: {log_filepath}")
+    logger.info(f"Output directory: {OUTPUT_PATH}")
+    logger.info(f"Figures directory: {FIGURES_PATH}")
+    
+    return logger 

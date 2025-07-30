@@ -219,7 +219,9 @@ warnings.filterwarnings('ignore')
 from config import *
 import matplotlib.ticker as mticker
 
-logger = logging.getLogger(__name__)
+# Set up logging
+from config import setup_logging
+logger = setup_logging()
 
 class FigureGeneration:
     """Class to handle figure generation for Burke replication."""

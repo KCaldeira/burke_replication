@@ -31,9 +31,9 @@ from tqdm import tqdm
 import os
 from config import INPUT_FILES, OUTPUT_FILES, N_BOOTSTRAP
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Set up logging
+from config import setup_logging
+logger = setup_logging()
 
 # Constants
 RANDOM_SEED = 8675309  # Same as Stata
@@ -847,9 +847,6 @@ class BurkeDataPreparation:
         data_copy['temp2_poor'] = data_copy['UDel_temp_popweight_2'] * poor
         data_copy['precip_poor'] = data_copy['UDel_precip_popweight'] * poor
         data_copy['precip2_poor'] = data_copy['UDel_precip_popweight_2'] * poor
-        # Debug: Check interaction terms
-        logger.debug(f"Interaction terms created: temp_poor range [{data_copy['temp_poor'].min():.4f}, {data_copy['temp_poor'].max():.4f}]")
-        logger.debug(f"Poor indicator stats: min={poor.min()}, max={poor.max()}, mean={poor.mean():.3f}, null_count={poor.isna().sum()}")
         # Get fixed effects
         year_cols = [col for col in data_copy.columns if col.startswith('year_')]
         iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
@@ -879,8 +876,6 @@ class BurkeDataPreparation:
         results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
         # Extract coefficients with proper error handling
         coefs = results.params
-        # Debug: Print available coefficients
-        logger.debug(f"Available coefficients in rich/poor no-lag regression: {list(coefs.index)}")
         return {
             'temp': coefs['UDel_temp_popweight'],
             'temppoor': coefs['temp_poor'],

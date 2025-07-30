@@ -28,7 +28,9 @@ warnings.filterwarnings('ignore')
 
 from config import *
 
-logger = logging.getLogger(__name__)
+# Set up logging
+from config import setup_logging
+logger = setup_logging()
 
 def map_country_codes(df, col='Region'):
     """Map country codes COD→ZAR and ROU→ROM for consistency with original R code."""

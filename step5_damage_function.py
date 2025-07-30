@@ -162,7 +162,9 @@ warnings.filterwarnings('ignore')
 
 from config import *
 
-logger = logging.getLogger(__name__)
+# Set up logging
+from config import setup_logging
+logger = setup_logging()
 
 class DamageFunction:
     """Class to handle damage function calculations."""

@@ -258,7 +258,21 @@
 5. **Territory Filtering:** Improved data quality by removing duplicate ISO codes
 6. **Country Code Mapping:** Enhanced compatibility across datasets
 
----
+--- 
+
+### System Configuration
+- **Python Executable Path:** `C:/ProgramData/anaconda3/python.exe`
+- **Operating System:** Windows 10 (win32 10.0.26100)
+- **Shell:** PowerShell (C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe)
+
+### Output Management (2025-01-27 Update)
+- **Timestamped Output Directories:** Each run creates `./data/output_YYMMDD_HHMMSS/` directory
+- **Timestamped Figures Directories:** Each run creates `./data/figures_YYMMDD_HHMMSS/` directory
+- **Timestamped Log Files:** Log files named `burke_replication_YYMMDD_HHMMSS.log` in project root
+- **Run Isolation:** Multiple runs can be executed without overwriting previous outputs
+- **Output-Log Correlation:** Same timestamp used for output directory, figures directory, and log file
+- **Centralized Logging:** All step files now use the centralized `setup_logging()` function from `config.py`
+- **Individual Step Support:** Fixed timestamp consistency for running individual steps (e.g., just step1) - all steps now use the same timestamp for a given run
 
 ---
 *Last Updated: 2025-01-27*

@@ -209,7 +209,9 @@ warnings.filterwarnings('ignore')
 
 from config import *
 
-logger = logging.getLogger(__name__)
+# Set up logging
+from config import setup_logging
+logger = setup_logging()
 
 class ImpactProjections:
     """Class to handle impact projections under different scenarios."""
@@ -347,24 +349,12 @@ class ImpactProjections:
                     # Project GDP without climate change
                     gdp_cap_no_cc[:, year_idx, b] = gdp_cap_no_cc[:, year_idx - 1, b] * (1 + growth_rate)
                     
-                    # DIAGNOSTIC LOGGING
-                    logger.debug(f"countries: {countries}")
-                    temp_changes_list = [self.country_temp_changes.get(iso, 0.01) for iso in countries]
-                    logger.debug(f"temp_changes_list: {temp_changes_list}")
-                    logger.debug(f"temp_changes_list types: {[type(x) for x in temp_changes_list]}")
-                    for idx, val in enumerate(temp_changes_list):
-                        if not isinstance(val, (float, int)):
-                            logger.error(f"Non-numeric temp change for iso {countries[idx]}: {val} (type: {type(val)})")
-                    # END DIAGNOSTIC LOGGING
-                    
                     # Original R code: newtemp = temp+j*ccd
                     # Calculate new temperature
                     years_since_2010 = year - 2010
                     new_temp = base_temp + years_since_2010 * np.array(temp_changes_list)
                     # Cap temperature at 30°C (original R: dg[newtemp>30] = ...)
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
-                    if np.any(new_temp > MAX_TEMPERATURE):
-                        logger.debug(f"Capped {np.sum(new_temp > MAX_TEMPERATURE)} country-years at 30°C in pooled model.")
                     # Calculate growth with climate change
                     climate_growth = temp_coef * capped_temp + temp2_coef * capped_temp ** 2
                     
@@ -483,8 +473,6 @@ class ImpactProjections:
                     ])
                     # Cap temperature at 30°C for both rich and poor (original R: dg[newtemp>30 & poor==0] = ...)
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
-                    if np.any(new_temp > MAX_TEMPERATURE):
-                        logger.debug(f"Capped {np.sum(new_temp > MAX_TEMPERATURE)} country-years at 30°C in rich/poor model.")
                     # Calculate growth with climate change for rich and poor
                     climate_growth = np.zeros(n_countries)
                     # Rich
@@ -600,8 +588,6 @@ class ImpactProjections:
                     
                     # Cap temperature at 30°C
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
-                    if np.any(new_temp > MAX_TEMPERATURE):
-                        logger.debug(f"Capped {np.sum(new_temp > MAX_TEMPERATURE)} country-years at 30°C in pooled 5-lag model.")
                     
                     # Original R code: dg = prj$tlin[tt]*newtemp + prj$tsq[tt]*newtemp*newtemp
                     # Calculate growth with climate change
@@ -719,8 +705,6 @@ class ImpactProjections:
                     
                     # Cap temperature at 30°C for both rich and poor
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
-                    if np.any(new_temp > MAX_TEMPERATURE):
-                        logger.debug(f"Capped {np.sum(new_temp > MAX_TEMPERATURE)} country-years at 30°C in rich/poor 5-lag model.")
                     
                     # Calculate growth with climate change for rich and poor
                     climate_growth = np.zeros(n_countries)

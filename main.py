@@ -25,6 +25,13 @@ def setup_logging():
     from config import setup_logging as config_setup_logging
     return config_setup_logging()
 
+def cleanup_timestamp_file():
+    """Clean up the timestamp file after pipeline completion."""
+    timestamp_file = PROJECT_ROOT / ".current_run_timestamp"
+    if timestamp_file.exists():
+        timestamp_file.unlink()
+        logger.info("Cleaned up timestamp file")
+
 def check_skip_condition(skip_flag, output_files, step_name):
     """Check if a step should be skipped based on flag only."""
     if skip_flag:
@@ -94,6 +101,7 @@ def main():
         run_step6()
     
     logger.info("Burke replication processing completed successfully!")
+    cleanup_timestamp_file()
 
 if __name__ == "__main__":
     main() 
