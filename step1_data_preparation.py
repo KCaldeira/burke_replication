@@ -114,10 +114,9 @@ class BurkeDataPreparation:
     
     def create_time_trends(self):
         """
-        Create country-specific time trends (like Stata xi commands).
+        Create time trends for regression analysis (optimized to avoid DataFrame fragmentation).
         
         Original Stata code:
-        drop _yi_* _y2_* time time2
         gen time = year - 1960
         gen time2 = time^2
         qui xi i.iso_id*time, pref(_yi_)  //linear country time trends
@@ -125,40 +124,356 @@ class BurkeDataPreparation:
         qui drop _yi_iso_id* 
         qui drop _y2_iso_id* 
         """
-        logger.info("Creating country-specific time trends with reference year 1960...")
+        logger.info("Creating time trends...")
         
-        # Drop existing trend variables if they exist
-        trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        if trend_cols:
-            self.data = self.data.drop(columns=trend_cols)
-        
-        # Prepare all _yi_ and _y2_ columns in one go to avoid fragmentation
-        countries = sorted(self.data['iso_id'].unique())
-        # Use the same base country as for dummies
-        base_country = countries[0]
-        logger.info(f"Base country for dummies and time trends: {base_country}")
-        # Recreate time variables with 1960 reference
+        # Create time variables with 1960 reference (like Stata: gen time = year - 1960; gen time2 = time^2)
         self.data['time'] = self.data['year'] - 1960
         self.data['time2'] = self.data['time'] ** 2
+        
+        # Create time trends (optimized to avoid DataFrame fragmentation)
+        countries = self.data['iso_id'].unique()
         yi_cols = {}
         y2_cols = {}
+        
         for country in countries:
             mask = self.data['iso_id'] == country
             yi_cols[f'_yi_{country}'] = np.where(mask, self.data['time'], 0)
             y2_cols[f'_y2_{country}'] = np.where(mask, self.data['time2'], 0)
+        
+        # Add all columns at once to avoid fragmentation
         yi_df = pd.DataFrame(yi_cols, index=self.data.index)
         y2_df = pd.DataFrame(y2_cols, index=self.data.index)
-        # Concatenate all at once
         self.data = pd.concat([self.data, yi_df, y2_df], axis=1)
-        # Drop the base country trend columns (like Stata: qui drop _yi_iso_id* and _y2_iso_id*)
-        base_trend_cols = [f'_yi_{base_country}', f'_y2_{base_country}']
-        trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        self.data = self.data.drop(columns=[col for col in trend_cols if col in base_trend_cols])
-        logger.info(f"Dropped base country trend columns: {base_trend_cols}")
-        logger.info(f"Created {len(trend_cols) - len(base_trend_cols)} country-specific time trend columns (excluding base)")
         
-        logger.info("Time trends created with reference year 1960")
-        return self.data
+        # Drop base trends (like Stata: qui drop _yi_iso_id*; qui drop _y2_iso_id*)
+        base_trends = [col for col in self.data.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
+        if base_trends:
+            self.data = self.data.drop(columns=base_trends)
+        
+        logger.info(f"Time trends created. Added {len(yi_cols)} linear and {len(y2_cols)} quadratic trend columns.")
+    
+    def run_regression(self, regression_type, data=None, **kwargs):
+        """
+        Unified regression function for all regression types.
+        
+        Args:
+            regression_type (str): One of ['baseline', 'heterogeneity', 'temporal', 
+                                  'bootstrap_pooled_no_lag', 'bootstrap_rich_poor_no_lag',
+                                  'bootstrap_pooled_5_lag', 'bootstrap_rich_poor_5_lag']
+            data (pd.DataFrame): Data to use (defaults to self.data)
+            **kwargs: Additional parameters specific to regression type
+                - dependent_var (str): Dependent variable name (default: 'growthWDI')
+                - interaction_var (str): Variable for interactions (e.g., 'poorWDIppp', 'early')
+                - use_lags (bool): Whether to use lagged variables (default: False)
+                - create_time_trends (bool): Whether to create time trends (default: True)
+        
+        Returns:
+            dict: Standardized results dictionary with keys:
+                - 'results': statsmodels regression results object
+                - 'params': dict of parameter estimates
+                - 'rsquared': float
+                - 'n_obs': int
+                - 'regression_type': str
+                - Additional keys specific to regression type
+        """
+        # Use provided data or default to self.data
+        if data is None:
+            data = self.data.copy()
+        else:
+            data = data.copy()
+        
+        # Extract kwargs
+        dependent_var = kwargs.get('dependent_var', 'growthWDI')
+        interaction_var = kwargs.get('interaction_var', None)
+        use_lags = kwargs.get('use_lags', False)
+        create_time_trends = kwargs.get('create_time_trends', True)
+        
+        #logger.info(f"Running {regression_type} regression...")
+        
+        # Create time trends if needed
+        if create_time_trends:
+            # Create time variables with 1960 reference
+            data['time'] = data['year'] - 1960
+            data['time2'] = data['time'] ** 2
+            
+            # Create time trends (optimized to avoid DataFrame fragmentation)
+            countries = data['iso_id'].unique()
+            yi_cols = {}
+            y2_cols = {}
+            for country in countries:
+                mask = data['iso_id'] == country
+                yi_cols[f'_yi_{country}'] = np.where(mask, data['time'], 0)
+                y2_cols[f'_y2_{country}'] = np.where(mask, data['time2'], 0)
+            
+            # Add all columns at once to avoid fragmentation
+            yi_df = pd.DataFrame(yi_cols, index=data.index)
+            y2_df = pd.DataFrame(y2_cols, index=data.index)
+            data = pd.concat([data, yi_df, y2_df], axis=1)
+            
+            # Drop base trends
+            base_trends = [col for col in data.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
+            if base_trends:
+                data = data.drop(columns=base_trends)
+        
+        # Create lagged variables if needed
+        if use_lags:
+            data = self._create_lagged_variables(data)
+        
+        # Prepare dependent variable
+        y = data[dependent_var]
+        
+        # Get fixed effects
+        year_cols = [col for col in data.columns if col.startswith('year_')]
+        iso_cols = [col for col in data.columns if col.startswith('iso_') and col != 'iso_id']
+        trend_cols = [col for col in data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
+        
+        # Prepare regression columns based on regression type
+        regression_cols = []
+        
+        if regression_type in ['baseline', 'bootstrap_pooled_no_lag']:
+            # Basic temperature and precipitation variables
+            regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                              'UDel_precip_popweight', 'UDel_precip_popweight_2']
+        
+        elif regression_type in ['heterogeneity', 'bootstrap_rich_poor_no_lag']:
+            # Basic variables plus interaction terms
+            regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                              'UDel_precip_popweight', 'UDel_precip_popweight_2']
+            
+            # Create interaction terms
+            if interaction_var and interaction_var in data.columns:
+                interaction_data = data[interaction_var]
+                data['temp_poor'] = data['UDel_temp_popweight'] * interaction_data
+                data['temp2_poor'] = data['UDel_temp_popweight_2'] * interaction_data
+                data['precip_poor'] = data['UDel_precip_popweight'] * interaction_data
+                data['precip2_poor'] = data['UDel_precip_popweight_2'] * interaction_data
+                
+                regression_cols.extend(['temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor'])
+        
+        elif regression_type in ['temporal']:
+            # Basic variables plus temporal interaction terms
+            regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
+                              'UDel_precip_popweight', 'UDel_precip_popweight_2']
+            
+            # Create temporal interaction terms
+            if interaction_var and interaction_var in data.columns:
+                interaction_data = data[interaction_var]
+                data['temp_early'] = data['UDel_temp_popweight'] * interaction_data
+                data['temp2_early'] = data['UDel_temp_popweight_2'] * interaction_data
+                data['precip_early'] = data['UDel_precip_popweight'] * interaction_data
+                data['precip2_early'] = data['UDel_precip_popweight_2'] * interaction_data
+                
+                regression_cols.extend(['temp_early', 'temp2_early', 'precip_early', 'precip2_early'])
+        
+        elif regression_type in ['bootstrap_pooled_5_lag']:
+            # Current and lagged variables
+            regression_cols = []
+            # Current and lagged temperature
+            regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
+            # Current and lagged temperature squared
+            regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
+            # Current and lagged precipitation
+            regression_cols.extend(['UDel_precip_popweight', 'L1prec', 'L2prec', 'L3prec', 'L4prec', 'L5prec'])
+            # Current and lagged precipitation squared
+            regression_cols.extend(['UDel_precip_popweight_2', 'L1prec2', 'L2prec2', 'L3prec2', 'L4prec2', 'L5prec2'])
+        
+        elif regression_type in ['bootstrap_rich_poor_5_lag']:
+            # Current and lagged variables with interaction terms
+            regression_cols = []
+            # Current and lagged temperature
+            regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
+            # Current and lagged temperature squared
+            regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
+            # Current and lagged precipitation
+            regression_cols.extend(['UDel_precip_popweight', 'L1prec', 'L2prec', 'L3prec', 'L4prec', 'L5prec'])
+            # Current and lagged precipitation squared
+            regression_cols.extend(['UDel_precip_popweight_2', 'L1prec2', 'L2prec2', 'L3prec2', 'L4prec2', 'L5prec2'])
+            
+            # Create interaction terms for all lagged variables
+            if interaction_var and interaction_var in data.columns:
+                interaction_data = data[interaction_var]
+                # Interaction terms for current variables
+                data['temp_poor'] = data['UDel_temp_popweight'] * interaction_data
+                data['temp2_poor'] = data['UDel_temp_popweight_2'] * interaction_data
+                data['precip_poor'] = data['UDel_precip_popweight'] * interaction_data
+                data['precip2_poor'] = data['UDel_precip_popweight_2'] * interaction_data
+                
+                # Interaction terms for lagged variables
+                for lag in range(1, 6):
+                    data[f'L{lag}temp_poor'] = data[f'L{lag}temp'] * interaction_data
+                    data[f'L{lag}temp2_poor'] = data[f'L{lag}temp2'] * interaction_data
+                    data[f'L{lag}prec_poor'] = data[f'L{lag}prec'] * interaction_data
+                    data[f'L{lag}prec2_poor'] = data[f'L{lag}prec2'] * interaction_data
+                
+                # Add interaction terms to regression columns
+                regression_cols.extend(['temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor'])
+                for lag in range(1, 6):
+                    regression_cols.extend([f'L{lag}temp_poor', f'L{lag}temp2_poor', 
+                                         f'L{lag}prec_poor', f'L{lag}prec2_poor'])
+        
+        # Add fixed effects
+        regression_cols.extend(year_cols)
+        regression_cols.extend(trend_cols)
+        regression_cols.extend(iso_cols)
+        
+        # Create X matrix
+        X = data[regression_cols]
+        X = sm.add_constant(X)
+        
+        # Remove missing values
+        valid_mask = ~(y.isna() | X.isna().any(axis=1))
+        y_clean = y[valid_mask]
+        X_clean = X[valid_mask]
+        
+        # Convert boolean columns to integers
+        bool_cols = X_clean.select_dtypes(include=['bool']).columns
+        for col in bool_cols:
+            X_clean.loc[:, col] = X_clean[col].astype(int)
+        
+        # DIAGNOSTIC: Check data types before regression (for baseline regression)
+        if regression_type == 'baseline':
+            logger.info("=== DIAGNOSTIC: Checking data types before regression ===")
+            logger.info(f"X_clean shape: {X_clean.shape}")
+            logger.info(f"X_clean dtypes:\n{X_clean.dtypes}")
+            
+            # Check for object dtype columns
+            object_cols = X_clean.select_dtypes(include=['object']).columns
+            if len(object_cols) > 0:
+                logger.error(f"Found object dtype columns: {list(object_cols)}")
+                for col in object_cols:
+                    logger.error(f"Column '{col}' unique values: {X_clean[col].unique()[:10]}")
+            
+            # Check for any non-numeric data
+            for col in X_clean.columns:
+                try:
+                    pd.to_numeric(X_clean[col], errors='raise')
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Column '{col}' contains non-numeric data: {e}")
+                    logger.error(f"Sample values: {X_clean[col].head()}")
+            
+            # Convert any remaining object columns to numeric if possible
+            for col in X_clean.columns:
+                if X_clean[col].dtype == 'object':
+                    try:
+                        X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
+                        logger.info(f"Converted column '{col}' from object to numeric")
+                    except Exception as e:
+                        logger.error(f"Could not convert column '{col}' to numeric: {e}")
+            
+            # Final check
+            logger.info(f"Final X_clean dtypes:\n{X_clean.dtypes}")
+            logger.info("=== END DIAGNOSTIC ===")
+        
+        # Run regression with clustering
+        model = OLS(y_clean, X_clean)
+        results = model.fit(cov_type='cluster', cov_kwds={'groups': data.loc[valid_mask, 'iso_id']})
+        
+        # Create standardized results dictionary
+        result_dict = {
+            'results': results,
+            'rsquared': results.rsquared,
+            'n_obs': len(y_clean),
+            'regression_type': regression_type,
+            'params': results.params.to_dict()
+        }
+        
+        # Add regression-specific parameters
+        if regression_type in ['bootstrap_pooled_no_lag', 'bootstrap_rich_poor_no_lag']:
+            coefs = results.params
+            if regression_type == 'bootstrap_pooled_no_lag':
+                result_dict.update({
+                    'temp': coefs['UDel_temp_popweight'],
+                    'temp2': coefs['UDel_temp_popweight_2'],
+                    'prec': coefs['UDel_precip_popweight'],
+                    'prec2': coefs['UDel_precip_popweight_2']
+                })
+            else:  # bootstrap_rich_poor_no_lag
+                result_dict.update({
+                    'temp': coefs['UDel_temp_popweight'],
+                    'temppoor': coefs['temp_poor'],
+                    'temp2': coefs['UDel_temp_popweight_2'],
+                    'temp2poor': coefs['temp2_poor'],
+                    'prec': coefs['UDel_precip_popweight'],
+                    'precpoor': coefs['precip_poor'],
+                    'prec2': coefs['UDel_precip_popweight_2'],
+                    'prec2poor': coefs['precip2_poor']
+                })
+        
+        elif regression_type in ['bootstrap_pooled_5_lag']:
+            coefs = results.params
+            # Calculate tlin and tsq (sums of lagged coefficients)
+            tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
+                    coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+            tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+                   coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+            
+            result_dict.update({
+                'temp': coefs['UDel_temp_popweight'],
+                'L1temp': coefs['L1temp'],
+                'L2temp': coefs['L2temp'],
+                'L3temp': coefs['L3temp'],
+                'L4temp': coefs['L4temp'],
+                'L5temp': coefs['L5temp'],
+                'temp2': coefs['UDel_temp_popweight_2'],
+                'L1temp2': coefs['L1temp2'],
+                'L2temp2': coefs['L2temp2'],
+                'L3temp2': coefs['L3temp2'],
+                'L4temp2': coefs['L4temp2'],
+                'L5temp2': coefs['L5temp2'],
+                'tlin': tlin,
+                'tsq': tsq
+            })
+        
+        elif regression_type in ['bootstrap_rich_poor_5_lag']:
+            coefs = results.params
+            # Calculate tlin and tsq for rich and poor separately
+            # Rich (no interaction)
+            tlin_rich = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
+                         coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
+            tsq_rich = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
+                        coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+            
+            # Poor (with interaction)
+            tlin_poor = tlin_rich + (coefs['temp_poor'] + coefs['L1temp_poor'] + coefs['L2temp_poor'] + 
+                                    coefs['L3temp_poor'] + coefs['L4temp_poor'] + coefs['L5temp_poor'])
+            tsq_poor = tsq_rich + (coefs['temp2_poor'] + coefs['L1temp2_poor'] + coefs['L2temp2_poor'] + 
+                                  coefs['L3temp2_poor'] + coefs['L4temp2_poor'] + coefs['L5temp2_poor'])
+            
+            result_dict.update({
+                'temp': coefs['UDel_temp_popweight'],
+                'L1temp': coefs['L1temp'],
+                'L2temp': coefs['L2temp'],
+                'L3temp': coefs['L3temp'],
+                'L4temp': coefs['L4temp'],
+                'L5temp': coefs['L5temp'],
+                'temp2': coefs['UDel_temp_popweight_2'],
+                'L1temp2': coefs['L1temp2'],
+                'L2temp2': coefs['L2temp2'],
+                'L3temp2': coefs['L3temp2'],
+                'L4temp2': coefs['L4temp2'],
+                'L5temp2': coefs['L5temp2'],
+                'temppoor': coefs['temp_poor'],
+                'L1temppoor': coefs['L1temp_poor'],
+                'L2temppoor': coefs['L2temp_poor'],
+                'L3temppoor': coefs['L3temp_poor'],
+                'L4temppoor': coefs['L4temp_poor'],
+                'L5temppoor': coefs['L5temp_poor'],
+                'temp2poor': coefs['temp2_poor'],
+                'L1temp2poor': coefs['L1temp2_poor'],
+                'L2temp2poor': coefs['L2temp2_poor'],
+                'L3temp2poor': coefs['L3temp2_poor'],
+                'L4temp2poor': coefs['L4temp2_poor'],
+                'L5temp2poor': coefs['L5temp2_poor'],
+                'tlin_rich': tlin_rich,
+                'tsq_rich': tsq_rich,
+                'tlin_poor': tlin_poor,
+                'tsq_poor': tsq_poor
+            })
+        
+        # Log R-squared to file only, not console
+        from config import log_file_only
+        log_file_only(f"{regression_type} regression completed. R-squared: {results.rsquared:.4f}")
+        return result_dict
     
     def baseline_regression(self):
         """
@@ -189,82 +504,16 @@ class BurkeDataPreparation:
         """
         logger.info("Running baseline regression...")
         
-        # Create time trends for this regression
-        self.create_time_trends()
+        # Use unified regression function
+        result_dict = self.run_regression('baseline')
         
-        # Original Stata code: gen temp = UDel_temp_popweight
-        # Prepare variables (like Stata: gen temp = UDel_temp_popweight)
-        y = self.data['growthWDI']
+        # Store results for compatibility
+        self.results['baseline'] = result_dict['results']
         
-        # Get fixed effects
-        year_cols = [col for col in self.data.columns if col.startswith('year_')]
-        iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
-        # Original Stata code: reg growthWDI c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id, cluster(iso_id)
-        # Prepare X matrix (matching Stata: c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
-        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
-                          'UDel_precip_popweight', 'UDel_precip_popweight_2']
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        
-        # Create X matrix directly from the dataframe
-        X = self.data[regression_cols]
-        X = sm.add_constant(X)
-        
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        
-        # DIAGNOSTIC: Check data types before regression
-        logger.info("=== DIAGNOSTIC: Checking data types before regression ===")
-        logger.info(f"X_clean shape: {X_clean.shape}")
-        logger.info(f"X_clean dtypes:\n{X_clean.dtypes}")
-        
-        # Check for object dtype columns
-        object_cols = X_clean.select_dtypes(include=['object']).columns
-        if len(object_cols) > 0:
-            logger.error(f"Found object dtype columns: {list(object_cols)}")
-            for col in object_cols:
-                logger.error(f"Column '{col}' unique values: {X_clean[col].unique()[:10]}")
-        
-        # Check for any non-numeric data
-        for col in X_clean.columns:
-            try:
-                pd.to_numeric(X_clean[col], errors='raise')
-            except (ValueError, TypeError) as e:
-                logger.error(f"Column '{col}' contains non-numeric data: {e}")
-                logger.error(f"Sample values: {X_clean[col].head()}")
-        
-        # Convert any remaining object columns to numeric if possible
-        for col in X_clean.columns:
-            if X_clean[col].dtype == 'object':
-                try:
-                    X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
-                    logger.info(f"Converted column '{col}' from object to numeric")
-                except Exception as e:
-                    logger.error(f"Could not convert column '{col}' to numeric: {e}")
-        
-        # Final check
-        logger.info(f"Final X_clean dtypes:\n{X_clean.dtypes}")
-        logger.info("=== END DIAGNOSTIC ===")
-        
-        # Run regression with clustering (like Stata: cluster(iso_id))
-        # Original Stata: cluster(iso_id)
-        model = OLS(y_clean, X_clean)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': self.data.loc[valid_mask, 'iso_id']})
-        
-        self.results['baseline'] = results
-        
-        logger.info(f"Baseline regression completed. R-squared: {results.rsquared:.4f}")
-        return results
+        # Log R-squared to file only, not console
+        from config import log_file_only
+        log_file_only(f"Baseline regression completed. R-squared: {result_dict['rsquared']:.4f}")
+        return result_dict['results']
     
     def generate_global_response(self, results):
         """
@@ -374,49 +623,12 @@ class BurkeDataPreparation:
                 
             logger.info(f"Analyzing heterogeneity for {var}...")
             
-            # Recreate time trends for this regression (like Stata: drop _yi_* _y2_* time time2; gen time = year - 1960; etc.)
-            self.create_time_trends()
+            # Use unified regression function for heterogeneity analysis
+            result_dict = self.run_regression('heterogeneity', 
+                                           dependent_var=var, 
+                                           interaction_var='poorWDIppp')
             
-            # Prepare data (like Stata: gen temp = UDel_temp_popweight; gen poorWDIppp = (GDPpctile_WDIppp<50); gen interact = poorWDIppp)
-            y = self.data[var]
-            poor = self.data['poorWDIppp']
-            
-            # Get fixed effects
-            year_cols = [col for col in self.data.columns if col.startswith('year_')]
-            iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
-            trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-            
-            # Create interaction terms (like Stata: interact#c.(c.temp##c.temp UDel_precip_popweight UDel_precip_popweight_2))
-            self.data['temp_poor'] = self.data['UDel_temp_popweight'] * poor
-            self.data['temp2_poor'] = self.data['UDel_temp_popweight_2'] * poor
-            self.data['precip_poor'] = self.data['UDel_precip_popweight'] * poor
-            self.data['precip2_poor'] = self.data['UDel_precip_popweight_2'] * poor
-            
-            # Prepare X matrix
-            regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
-                              'UDel_precip_popweight', 'UDel_precip_popweight_2',
-                              'temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor']
-            regression_cols.extend(year_cols)
-            regression_cols.extend(trend_cols)
-            regression_cols.extend(iso_cols)
-            
-            # Create X matrix directly from the dataframe
-            X = self.data[regression_cols]
-            X = sm.add_constant(X)
-            
-            # Remove missing values
-            valid_mask = ~(y.isna() | X.isna().any(axis=1))
-            y_clean = y[valid_mask]
-            X_clean = X[valid_mask]
-            
-            # Convert boolean columns to integers
-            bool_cols = X_clean.select_dtypes(include=['bool']).columns
-            for col in bool_cols:
-                X_clean.loc[:, col] = X_clean[col].astype(int)
-            
-            # Run regression with clustering
-            model = OLS(y_clean, X_clean)
-            results = model.fit(cov_type='cluster', cov_kwds={'groups': self.data.loc[valid_mask, 'iso_id']})
+            results = result_dict['results']
             
             # Generate response functions for rich and poor (like Stata: margins, over(interact) at(temp=(0(1)30)))
             temp_range = np.arange(0, 31, 1)
@@ -475,49 +687,12 @@ class BurkeDataPreparation:
         """
         logger.info("Running temporal heterogeneity analysis...")
         
-        # Recreate time trends for this regression
-        self.create_time_trends()
+        # Use unified regression function for temporal heterogeneity analysis
+        result_dict = self.run_regression('temporal', 
+                                       dependent_var='growthWDI', 
+                                       interaction_var='early')
         
-        # Prepare data (like Stata: gen temp = UDel_temp_popweight; gen early = year<1990; gen interact = early)
-        y = self.data['growthWDI']
-        early = self.data['early']
-        
-        # Get fixed effects
-        year_cols = [col for col in self.data.columns if col.startswith('year_')]
-        iso_cols = [col for col in self.data.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in self.data.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        
-        # Create interaction terms
-        self.data['temp_early'] = self.data['UDel_temp_popweight'] * early
-        self.data['temp2_early'] = self.data['UDel_temp_popweight_2'] * early
-        self.data['precip_early'] = self.data['UDel_precip_popweight'] * early
-        self.data['precip2_early'] = self.data['UDel_precip_popweight_2'] * early
-        
-        # Prepare X matrix
-        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
-                          'UDel_precip_popweight', 'UDel_precip_popweight_2',
-                          'temp_early', 'temp2_early', 'precip_early', 'precip2_early']
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        
-        # Create X matrix directly from the dataframe
-        X = self.data[regression_cols]
-        X = sm.add_constant(X)
-        
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        
-        # Run regression with clustering
-        model = OLS(y_clean, X_clean)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': self.data.loc[valid_mask, 'iso_id']})
+        results = result_dict['results']
         
         # Generate response functions for early and late periods
         temp_range = np.arange(0, 31, 1)
@@ -663,60 +838,13 @@ class BurkeDataPreparation:
         qui gen UDel_temp_popweight_2 = UDel_temp_popweight^2
         qui reg growthWDI UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id
         """
-        # Recreate time trends for this regression
-        data_copy = data.copy()
-        # Create time variables with 1960 reference
-        data_copy['time'] = data_copy['year'] - 1960
-        data_copy['time2'] = data_copy['time'] ** 2
-        # Create time trends (optimized to avoid DataFrame fragmentation)
-        countries = data_copy['iso_id'].unique()
-        yi_cols = {}
-        y2_cols = {}
-        for country in countries:
-            mask = data_copy['iso_id'] == country
-            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
-        
-        # Add all columns at once to avoid fragmentation
-        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
-        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
-        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
-        # Drop base trends
-        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
-        if base_trends:
-            data_copy = data_copy.drop(columns=base_trends)
-        y = data_copy['growthWDI']
-        # Get fixed effects
-        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        # Prepare X matrix
-        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
-                          'UDel_precip_popweight', 'UDel_precip_popweight_2']
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        # Create X matrix directly from the dataframe
-        X = data_copy[regression_cols]
-        X = sm.add_constant(X)
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        # Run regression (like Stata: qui reg growthWDI UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2 i.year _yi_* _y2_* i.iso_id)
-        model = OLS(y_clean, X_clean)
-        # Run regression with clustering (like Stata: cluster(iso_id))
-        # Original Stata: cluster(iso_id)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
+        # Use unified regression function
+        result_dict = self.run_regression('bootstrap_pooled_no_lag', data=data, create_time_trends=True)
         return {
-            'temp': results.params['UDel_temp_popweight'],
-            'temp2': results.params['UDel_temp_popweight_2'],
-            'prec': results.params['UDel_precip_popweight'],
-            'prec2': results.params['UDel_precip_popweight_2']
+            'temp': result_dict['temp'],
+            'temp2': result_dict['temp2'],
+            'prec': result_dict['prec'],
+            'prec2': result_dict['prec2']
         }
     
     def _bootstrap_rich_poor_no_lag(self, countries, n_countries):
@@ -818,73 +946,20 @@ class BurkeDataPreparation:
         qui replace poor=. if GDPpctile_WDIppp==.
         qui reg growthWDI poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id
         """
-        # Recreate time trends for this regression
-        data_copy = data.copy()
-        # Create time variables with 1960 reference
-        data_copy['time'] = data_copy['year'] - 1960
-        data_copy['time2'] = data_copy['time'] ** 2
-        # Create time trends (optimized to avoid DataFrame fragmentation)
-        countries = data_copy['iso_id'].unique()
-        yi_cols = {}
-        y2_cols = {}
-        for country in countries:
-            mask = data_copy['iso_id'] == country
-            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
-        
-        # Add all columns at once to avoid fragmentation
-        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
-        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
-        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
-        # Drop base trends
-        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
-        if base_trends:
-            data_copy = data_copy.drop(columns=base_trends)
-        y = data_copy['growthWDI']
-        poor = data_copy['poorWDIppp']
-        # Create interaction terms (like Stata: poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2))
-        data_copy['temp_poor'] = data_copy['UDel_temp_popweight'] * poor
-        data_copy['temp2_poor'] = data_copy['UDel_temp_popweight_2'] * poor
-        data_copy['precip_poor'] = data_copy['UDel_precip_popweight'] * poor
-        data_copy['precip2_poor'] = data_copy['UDel_precip_popweight_2'] * poor
-        # Get fixed effects
-        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        # Prepare X matrix
-        regression_cols = ['UDel_temp_popweight', 'UDel_temp_popweight_2', 
-                          'UDel_precip_popweight', 'UDel_precip_popweight_2',
-                          'temp_poor', 'temp2_poor', 'precip_poor', 'precip2_poor']
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        # Create X matrix directly from the dataframe
-        X = data_copy[regression_cols]
-        X = sm.add_constant(X)
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        # Run regression (like Stata: qui reg growthWDI poor#c.(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id)
-        model = OLS(y_clean, X_clean)
-        # Run regression with clustering (like Stata: cluster(iso_id))
-        # Original Stata: cluster(iso_id)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
-        # Extract coefficients with proper error handling
-        coefs = results.params
+        # Use unified regression function
+        result_dict = self.run_regression('bootstrap_rich_poor_no_lag', 
+                                       data=data, 
+                                       create_time_trends=True,
+                                       interaction_var='poorWDIppp')
         return {
-            'temp': coefs['UDel_temp_popweight'],
-            'temppoor': coefs['temp_poor'],
-            'temp2': coefs['UDel_temp_popweight_2'],
-            'temp2poor': coefs['temp2_poor'],
-            'prec': coefs['UDel_precip_popweight'],
-            'precpoor': coefs['precip_poor'],
-            'prec2': coefs['UDel_precip_popweight_2'],
-            'prec2poor': coefs['precip2_poor']
+            'temp': result_dict['temp'],
+            'temppoor': result_dict['temppoor'],
+            'temp2': result_dict['temp2'],
+            'temp2poor': result_dict['temp2poor'],
+            'prec': result_dict['prec'],
+            'precpoor': result_dict['precpoor'],
+            'prec2': result_dict['prec2'],
+            'prec2poor': result_dict['prec2poor']
         }
     
     def _create_lagged_variables(self, data):
@@ -930,85 +1005,26 @@ class BurkeDataPreparation:
         xtset iso_id year
         qui reg growthWDI L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2) i.year _yi_* _y2_* i.iso_id
         """
-        # Create lagged variables
-        data_copy = self._create_lagged_variables(data)
-        # Recreate time trends for this regression
-        data_copy['time'] = data_copy['year'] - 1960
-        data_copy['time2'] = data_copy['time'] ** 2
-        # Create time trends (optimized to avoid DataFrame fragmentation)
-        countries = data_copy['iso_id'].unique()
-        yi_cols = {}
-        y2_cols = {}
-        for country in countries:
-            mask = data_copy['iso_id'] == country
-            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
-        
-        # Add all columns at once to avoid fragmentation
-        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
-        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
-        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
-        # Drop base trends
-        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
-        if base_trends:
-            data_copy = data_copy.drop(columns=base_trends)
-        y = data_copy['growthWDI']
-        # Get fixed effects
-        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        # Prepare X matrix with all lagged variables
-        regression_cols = []
-        # Current and lagged temperature
-        regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
-        # Current and lagged temperature squared
-        regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
-        # Current and lagged precipitation
-        regression_cols.extend(['UDel_precip_popweight', 'L1prec', 'L2prec', 'L3prec', 'L4prec', 'L5prec'])
-        # Current and lagged precipitation squared
-        regression_cols.extend(['UDel_precip_popweight_2', 'L1prec2', 'L2prec2', 'L3prec2', 'L4prec2', 'L5prec2'])
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        # Create X matrix
-        X = data_copy[regression_cols]
-        X = sm.add_constant(X)
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        # Run regression
-        model = OLS(y_clean, X_clean)
-        # Run regression with clustering (like Stata: cluster(iso_id))
-        # Original Stata: cluster(iso_id)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
-        # (Removed logger.info here)
-        # Extract coefficients
-        coefs = results.params
-        # Calculate tlin and tsq (sums of lagged coefficients)
-        tlin = (coefs['UDel_temp_popweight'] + coefs['L1temp'] + coefs['L2temp'] + 
-                coefs['L3temp'] + coefs['L4temp'] + coefs['L5temp'])
-        tsq = (coefs['UDel_temp_popweight_2'] + coefs['L1temp2'] + coefs['L2temp2'] + 
-               coefs['L3temp2'] + coefs['L4temp2'] + coefs['L5temp2'])
+        # Use unified regression function
+        result_dict = self.run_regression('bootstrap_pooled_5_lag', 
+                                       data=data, 
+                                       create_time_trends=True,
+                                       use_lags=True)
         return {
-            'temp': coefs['UDel_temp_popweight'],
-            'L1temp': coefs['L1temp'],
-            'L2temp': coefs['L2temp'],
-            'L3temp': coefs['L3temp'],
-            'L4temp': coefs['L4temp'],
-            'L5temp': coefs['L5temp'],
-            'temp2': coefs['UDel_temp_popweight_2'],
-            'L1temp2': coefs['L1temp2'],
-            'L2temp2': coefs['L2temp2'],
-            'L3temp2': coefs['L3temp2'],
-            'L4temp2': coefs['L4temp2'],
-            'L5temp2': coefs['L5temp2'],
-            'tlin': tlin,
-            'tsq': tsq
+            'temp': result_dict['temp'],
+            'L1temp': result_dict['L1temp'],
+            'L2temp': result_dict['L2temp'],
+            'L3temp': result_dict['L3temp'],
+            'L4temp': result_dict['L4temp'],
+            'L5temp': result_dict['L5temp'],
+            'temp2': result_dict['temp2'],
+            'L1temp2': result_dict['L1temp2'],
+            'L2temp2': result_dict['L2temp2'],
+            'L3temp2': result_dict['L3temp2'],
+            'L4temp2': result_dict['L4temp2'],
+            'L5temp2': result_dict['L5temp2'],
+            'tlin': result_dict['tlin'],
+            'tsq': result_dict['tsq']
         }
     
     def _run_rich_poor_5_lag_regression(self, data):
@@ -1021,93 +1037,37 @@ class BurkeDataPreparation:
         qui replace poor=. if GDPpctile_WDIppp==.
         qui reg growthWDI poor#c.(L(0/5).(UDel_temp_popweight UDel_temp_popweight_2 UDel_precip_popweight UDel_precip_popweight_2)) i.year _yi_* _y2_* i.iso_id
         """
-        # Create lagged variables
-        data_copy = self._create_lagged_variables(data)
-        # Recreate time trends for this regression
-        data_copy['time'] = data_copy['year'] - 1960
-        data_copy['time2'] = data_copy['time'] ** 2
-        # Create time trends (optimized to avoid DataFrame fragmentation)
-        countries = data_copy['iso_id'].unique()
-        yi_cols = {}
-        y2_cols = {}
-        for country in countries:
-            mask = data_copy['iso_id'] == country
-            yi_cols[f'_yi_{country}'] = np.where(mask, data_copy['time'], 0)
-            y2_cols[f'_y2_{country}'] = np.where(mask, data_copy['time2'], 0)
-        
-        # Add all columns at once to avoid fragmentation
-        yi_df = pd.DataFrame(yi_cols, index=data_copy.index)
-        y2_df = pd.DataFrame(y2_cols, index=data_copy.index)
-        data_copy = pd.concat([data_copy, yi_df, y2_df], axis=1)
-        # Drop base trends
-        base_trends = [col for col in data_copy.columns if '_yi_iso_id' in col or '_y2_iso_id' in col]
-        if base_trends:
-            data_copy = data_copy.drop(columns=base_trends)
-        y = data_copy['growthWDI']
-        poor = data_copy['poorWDIppp']
-        # Get fixed effects
-        year_cols = [col for col in data_copy.columns if col.startswith('year_')]
-        iso_cols = [col for col in data_copy.columns if col.startswith('iso_') and col != 'iso_id']
-        trend_cols = [col for col in data_copy.columns if col.startswith('_yi_') or col.startswith('_y2_')]
-        # Prepare X matrix with all lagged variables and interactions
-        regression_cols = []
-        # Current and lagged temperature (rich)
-        regression_cols.extend(['UDel_temp_popweight', 'L1temp', 'L2temp', 'L3temp', 'L4temp', 'L5temp'])
-        # Current and lagged temperature (poor) - need to create current poor interactions
-        data_copy['temppoor'] = data_copy['UDel_temp_popweight'] * poor
-        data_copy['temp2poor'] = data_copy['UDel_temp_popweight_2'] * poor
-        regression_cols.extend(['temppoor', 'L1temppoor', 'L2temppoor', 'L3temppoor', 'L4temppoor', 'L5temppoor'])
-        # Current and lagged temperature squared (rich)
-        regression_cols.extend(['UDel_temp_popweight_2', 'L1temp2', 'L2temp2', 'L3temp2', 'L4temp2', 'L5temp2'])
-        # Current and lagged temperature squared (poor)
-        regression_cols.extend(['temp2poor', 'L1temp2poor', 'L2temp2poor', 'L3temp2poor', 'L4temp2poor', 'L5temp2poor'])
-        regression_cols.extend(year_cols)
-        regression_cols.extend(trend_cols)
-        regression_cols.extend(iso_cols)
-        # Create X matrix
-        X = data_copy[regression_cols]
-        X = sm.add_constant(X)
-        # Remove missing values
-        valid_mask = ~(y.isna() | X.isna().any(axis=1))
-        y_clean = y[valid_mask]
-        X_clean = X[valid_mask]
-        # Convert boolean columns to integers
-        bool_cols = X_clean.select_dtypes(include=['bool']).columns
-        for col in bool_cols:
-            X_clean.loc[:, col] = X_clean[col].astype(int)
-        # Run regression
-        model = OLS(y_clean, X_clean)
-        # Run regression with clustering (like Stata: cluster(iso_id))
-        # Original Stata: cluster(iso_id)
-        results = model.fit(cov_type='cluster', cov_kwds={'groups': data_copy.loc[valid_mask, 'iso_id']})
-        # (Removed logger.info here)
-        # Extract coefficients
-        coefs = results.params
+        # Use unified regression function
+        result_dict = self.run_regression('bootstrap_rich_poor_5_lag', 
+                                       data=data, 
+                                       create_time_trends=True,
+                                       use_lags=True,
+                                       interaction_var='poorWDIppp')
         return {
-            'temp': coefs['UDel_temp_popweight'],
-            'L1temp': coefs['L1temp'],
-            'L2temp': coefs['L2temp'],
-            'L3temp': coefs['L3temp'],
-            'L4temp': coefs['L4temp'],
-            'L5temp': coefs['L5temp'],
-            'temp2': coefs['UDel_temp_popweight_2'],
-            'L1temp2': coefs['L1temp2'],
-            'L2temp2': coefs['L2temp2'],
-            'L3temp2': coefs['L3temp2'],
-            'L4temp2': coefs['L4temp2'],
-            'L5temp2': coefs['L5temp2'],
-            'temppoor': coefs['temppoor'],
-            'L1temppoor': coefs['L1temppoor'],
-            'L2temppoor': coefs['L2temppoor'],
-            'L3temppoor': coefs['L3temppoor'],
-            'L4temppoor': coefs['L4temppoor'],
-            'L5temppoor': coefs['L5temppoor'],
-            'temp2poor': coefs['temp2poor'],
-            'L1temp2poor': coefs['L1temp2poor'],
-            'L2temp2poor': coefs['L2temp2poor'],
-            'L3temp2poor': coefs['L3temp2poor'],
-            'L4temp2poor': coefs['L4temp2poor'],
-            'L5temp2poor': coefs['L5temp2poor']
+            'temp': result_dict['temp'],
+            'L1temp': result_dict['L1temp'],
+            'L2temp': result_dict['L2temp'],
+            'L3temp': result_dict['L3temp'],
+            'L4temp': result_dict['L4temp'],
+            'L5temp': result_dict['L5temp'],
+            'temp2': result_dict['temp2'],
+            'L1temp2': result_dict['L1temp2'],
+            'L2temp2': result_dict['L2temp2'],
+            'L3temp2': result_dict['L3temp2'],
+            'L4temp2': result_dict['L4temp2'],
+            'L5temp2': result_dict['L5temp2'],
+            'temppoor': result_dict['temppoor'],
+            'L1temppoor': result_dict['L1temppoor'],
+            'L2temppoor': result_dict['L2temppoor'],
+            'L3temppoor': result_dict['L3temppoor'],
+            'L4temppoor': result_dict['L4temppoor'],
+            'L5temppoor': result_dict['L5temppoor'],
+            'temp2poor': result_dict['temp2poor'],
+            'L1temp2poor': result_dict['L1temp2poor'],
+            'L2temp2poor': result_dict['L2temp2poor'],
+            'L3temp2poor': result_dict['L3temp2poor'],
+            'L4temp2poor': result_dict['L4temp2poor'],
+            'L5temp2poor': result_dict['L5temp2poor']
         }
     
     def _bootstrap_pooled_5_lag(self, countries, n_countries):

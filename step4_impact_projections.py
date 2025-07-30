@@ -352,7 +352,21 @@ class ImpactProjections:
                     # Original R code: newtemp = temp+j*ccd
                     # Calculate new temperature
                     years_since_2010 = year - 2010
-                    new_temp = base_temp + years_since_2010 * np.array(temp_changes_list)
+                    # Get temperature changes for each country
+                    temp_changes = []
+                    missing_countries = []
+                    for country in countries:
+                        if country in self.country_temp_changes:
+                            temp_changes.append(self.country_temp_changes[country])
+                        else:
+                            temp_changes.append(0)
+                            missing_countries.append(country)
+                    
+                    if missing_countries:
+                        logger.warning(f"Missing temperature change data for countries: {missing_countries}, defaulting to 0")
+                    
+                    temp_changes = np.array(temp_changes)
+                    new_temp = base_temp + years_since_2010 * temp_changes
                     # Cap temperature at 30°C (original R: dg[newtemp>30] = ...)
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
                     # Calculate growth with climate change
@@ -468,9 +482,19 @@ class ImpactProjections:
                     
                     # Calculate new temperature
                     years_since_2010 = year - 2010
-                    new_temp = base_temp + years_since_2010 * np.array([
-                        self.country_temp_changes.get(iso, 0.01) for iso in countries
-                    ])
+                    temp_changes = []
+                    missing_countries = []
+                    for iso in countries:
+                        if iso in self.country_temp_changes:
+                            temp_changes.append(self.country_temp_changes[iso])
+                        else:
+                            temp_changes.append(0.01)  # Default for rich/poor model
+                            missing_countries.append(iso)
+                    
+                    if missing_countries:
+                        logger.warning(f"Missing temperature change data for countries: {missing_countries}, defaulting to 0.01")
+                    
+                    new_temp = base_temp + years_since_2010 * np.array(temp_changes)
                     # Cap temperature at 30°C for both rich and poor (original R: dg[newtemp>30 & poor==0] = ...)
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
                     # Calculate growth with climate change for rich and poor
@@ -582,9 +606,19 @@ class ImpactProjections:
                     
                     # Calculate new temperature
                     years_since_2010 = year - 2010
-                    new_temp = base_temp + years_since_2010 * np.array([
-                        self.country_temp_changes.get(iso, 0.01) for iso in countries
-                    ])
+                    temp_changes = []
+                    missing_countries = []
+                    for iso in countries:
+                        if iso in self.country_temp_changes:
+                            temp_changes.append(self.country_temp_changes[iso])
+                        else:
+                            temp_changes.append(0.01)  # Default for 5-lag model
+                            missing_countries.append(iso)
+                    
+                    if missing_countries:
+                        logger.warning(f"Missing temperature change data for countries: {missing_countries}, defaulting to 0.01")
+                    
+                    new_temp = base_temp + years_since_2010 * np.array(temp_changes)
                     
                     # Cap temperature at 30°C
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)
@@ -699,9 +733,19 @@ class ImpactProjections:
                     
                     # Calculate new temperature
                     years_since_2010 = year - 2010
-                    new_temp = base_temp + years_since_2010 * np.array([
-                        self.country_temp_changes.get(iso, 0.01) for iso in countries
-                    ])
+                    temp_changes = []
+                    missing_countries = []
+                    for iso in countries:
+                        if iso in self.country_temp_changes:
+                            temp_changes.append(self.country_temp_changes[iso])
+                        else:
+                            temp_changes.append(0.01)  # Default for rich/poor 5-lag model
+                            missing_countries.append(iso)
+                    
+                    if missing_countries:
+                        logger.warning(f"Missing temperature change data for countries: {missing_countries}, defaulting to 0.01")
+                    
+                    new_temp = base_temp + years_since_2010 * np.array(temp_changes)
                     
                     # Cap temperature at 30°C for both rich and poor
                     capped_temp = np.where(new_temp > MAX_TEMPERATURE, MAX_TEMPERATURE, new_temp)

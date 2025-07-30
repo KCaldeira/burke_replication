@@ -133,7 +133,7 @@ def setup_logging(verbosity_level=VERBOSITY_LEVEL, timestamp=None):
     if timestamp is None:
         timestamp = CURRENT_TIMESTAMP
     log_filename = f"burke_replication_{timestamp}.log"
-    log_filepath = PROJECT_ROOT / log_filename
+    log_filepath = OUTPUT_PATH / log_filename
     
     # Clear any existing handlers to avoid duplicates
     logging.getLogger().handlers.clear()
@@ -141,12 +141,12 @@ def setup_logging(verbosity_level=VERBOSITY_LEVEL, timestamp=None):
     # Create formatter
     formatter = logging.Formatter(format_str)
     
-    # Create file handler
+    # Create file handler (logs everything)
     file_handler = logging.FileHandler(log_filepath, mode='w', encoding='utf-8')
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     
-    # Create console handler
+    # Create console handler (filters out certain messages)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
@@ -158,10 +158,58 @@ def setup_logging(verbosity_level=VERBOSITY_LEVEL, timestamp=None):
         force=True
     )
     
+    # Add filter to suppress matplotlib findfont debug messages
+    class MatplotlibFilter(logging.Filter):
+        def filter(self, record):
+            # Filter out matplotlib findfont debug messages
+            if record.name == 'matplotlib.font_manager' and 'findfont' in record.getMessage():
+                return False
+            return True
+    
+    # Apply the filter to both handlers
+    file_handler.addFilter(MatplotlibFilter())
+    console_handler.addFilter(MatplotlibFilter())
+    
     # Get logger for this module
     logger = logging.getLogger(__name__)
     logger.info(f"Logging initialized. Log file: {log_filepath}")
     logger.info(f"Output directory: {OUTPUT_PATH}")
     logger.info(f"Figures directory: {FIGURES_PATH}")
     
-    return logger 
+    return logger
+
+def log_file_only(message, level=logging.INFO):
+    """
+    Log a message to file only, not to console.
+    
+    Args:
+        message (str): Message to log
+        level (int): Logging level (default: INFO)
+    """
+    logger = logging.getLogger()
+    
+    # Create a temporary handler that only writes to file
+    # We'll use the existing file handler but temporarily disable console output
+    original_handlers = logger.handlers.copy()
+    
+    # Find the file handler and console handler
+    file_handler = None
+    console_handler = None
+    for handler in original_handlers:
+        if isinstance(handler, logging.FileHandler):
+            file_handler = handler
+        elif isinstance(handler, logging.StreamHandler):
+            console_handler = handler
+    
+    if file_handler and console_handler:
+        # Temporarily disable console handler
+        console_handler.setLevel(logging.CRITICAL + 1)  # Set to higher than any normal level
+        
+        # Log the message
+        logger.log(level, message)
+        
+        # Restore console handler
+        console_handler.setLevel(logging.getLogger().level)
+    else:
+        # Fallback: just log normally
+        logger.log(level, message) 

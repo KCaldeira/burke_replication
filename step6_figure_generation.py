@@ -457,6 +457,13 @@ class FigureGeneration:
                         gdp_nocc_mean = global_data[:, 1]
                         gdp_cc_ci = None
                         gdp_nocc_ci = None
+                    # Remove the first data point because it is always zero and not meaningful for the plot
+                    years = years[1:]
+                    gdp_cc_mean = gdp_cc_mean[1:]
+                    gdp_nocc_mean = gdp_nocc_mean[1:]
+                    if gdp_cc_ci is not None:
+                        gdp_cc_ci = gdp_cc_ci[:, 1:]
+                        gdp_nocc_ci = gdp_nocc_ci[:, 1:]
                     # Plot with climate change
                     ax.plot(years, gdp_cc_mean, color=colors[scenario], linewidth=2, 
                            label=f'{scenario} (with CC)')

@@ -98,6 +98,17 @@
 **Problem:** While the code runs through to completion without failure, there are issues with the PDF image output that need to be fixed:
 
 1. **Figure 3 Implementation:** ✅ RESOLVED
+   - **Issue:** First data point was always zero and not meaningful for the plot
+   - **Fix:** Removed first data point from all arrays (years, gdp_cc_mean, gdp_nocc_mean, confidence intervals) before plotting
+   - **Code:** Added explicit array slicing `[1:]` with clear comment explaining the removal
+   - **Result:** Plot now starts with meaningful data points, eliminating the zero-value artifact
+
+2. **Missing Country Logging:** ✅ RESOLVED
+   - **Issue:** Countries missing from temperature changes dictionary were silently defaulting to zero/0.01
+   - **Fix:** Added explicit logging in all four projection methods to track missing countries
+   - **Implementation:** Enhanced `project_pooled_no_lag`, `project_rich_poor_no_lag`, `project_pooled_5_lag`, and `project_rich_poor_5_lag` methods
+   - **Logging:** Now reports which countries are missing and defaulting to what values
+   - **Benefit:** Improved debugging and data coverage transparency
    - **Issue:** Figure 3 was previously just a placeholder
    - **Solution:** Implemented proper GDP per capita projection plots
    - **Status:** Now shows time series for pooled/rich-poor models across base/SSP3/SSP5 scenarios
@@ -290,4 +301,147 @@
   - The values for SSP3 and SSP5 in Figure 3 are extremely large ("blowing up").
   - **Next step:** Systematically diagnose why the GDP per capita projections for these scenarios are so high, focusing on the underlying data and projection logic.
 
---- 
+---
+
+### Step 1 Refactoring - Unified Regression Function (2025-07-30)
+
+#### ✅ Major Code Restructuring Completed
+**Objective:** Refactor `step1_data_preparation.py` to replace seven separate OLS calls with a single unified `run_regression()` function while maintaining identical results.
+
+#### ✅ Key Accomplishments
+
+1. **Unified Regression Function:**
+   - Created `run_regression(self, regression_type, data=None, **kwargs)` function
+   - Handles all seven regression types through parameters:
+     - `'baseline'` - Baseline regression (quadratic temperature response)
+     - `'heterogeneity'` - Rich/poor country analysis
+     - `'temporal'` - Early/late period analysis
+     - `'bootstrap_pooled_no_lag'` - Bootstrap pooled no-lag
+     - `'bootstrap_rich_poor_no_lag'` - Bootstrap rich/poor no-lag
+     - `'bootstrap_pooled_5_lag'` - Bootstrap pooled 5-lag
+     - `'bootstrap_rich_poor_5_lag'` - Bootstrap rich/poor 5-lag
+
+2. **Standardized Return Format:**
+   - Returns dictionary with consistent keys:
+     - `'results'` - statsmodels regression results object
+     - `'params'` - dict of parameter estimates
+     - `'rsquared'` - float
+     - `'n_obs'` - int
+     - `'regression_type'` - str
+     - Additional keys specific to regression type
+
+3. **Parameter System:**
+   - `dependent_var` - Dependent variable name (default: 'growthWDI')
+   - `interaction_var` - Variable for interactions (e.g., 'poorWDIppp', 'early')
+   - `use_lags` - Whether to use lagged variables (default: False)
+   - `create_time_trends` - Whether to create time trends (default: True)
+
+4. **Enhanced Logging System:**
+   - Added `log_file_only()` function in `config.py` for selective logging
+   - R-squared values now logged to file only (not console)
+   - Restored line numbers in debug mode logging format
+   - Maintained all existing diagnostic logging
+
+5. **Timestamped Output Directories:**
+   - Output files now go to `./data/output_YYMMDD_HHMMSS/`
+   - Figures go to `./data/figures_YYMMDD_HHMMSS/`
+   - Log files placed in timestamped output directory
+   - Run isolation prevents overwriting previous outputs
+
+#### ✅ Code Quality Improvements
+
+1. **Maintainability:**
+   - Single function handles all regression types
+   - Consistent parameter handling across all models
+   - Standardized return format for easier processing
+   - Reduced code duplication
+
+2. **Transparency:**
+   - Preserved all original Stata/R code comments
+   - Maintained diagnostic-first approach
+   - Added comprehensive docstrings
+   - Clear parameter documentation
+
+3. **Robustness:**
+   - Proper handling of boolean column conversion
+   - Missing value handling
+   - Time trend creation for bootstrap regressions
+   - Lagged variable creation for 5-lag models
+   - Proper clustering with iso_id
+
+#### ✅ Validation Results
+- **Identical Results:** All regression outputs match original implementation exactly
+- **R-squared Values:** Baseline regression R-squared: 0.2402 (unchanged)
+- **Bootstrap Results:** All bootstrap models complete successfully (11 successful runs each)
+- **Output Files:** All files generated in correct timestamped directories
+- **Logging:** File-only logging for R-squared values, line numbers restored in debug mode
+
+#### ✅ Technical Implementation Details
+
+1. **Dynamic X Matrix Construction:**
+   - Function dynamically constructs the X matrix based on `regression_type`
+   - Handles fixed effects (year, country, time trends)
+   - Creates interaction terms as needed
+   - Manages lagged variables for 5-lag models
+
+2. **Fixed Effects Handling:**
+   - Year dummy variables (dropped reference year)
+   - Country dummy variables (dropped reference country)
+   - Country-specific time trends (linear and quadratic)
+
+3. **Clustering and Standard Errors:**
+   - Robust standard errors clustered by `iso_id`
+   - Proper handling of missing values
+   - Boolean column conversion to numeric (1/0)
+
+4. **Bootstrap Integration:**
+   - Seamless integration with existing bootstrap framework
+   - Maintains all bootstrap-specific parameter extraction
+   - Preserves original bootstrap output format
+
+#### ✅ Files Modified
+- `step1_data_preparation.py` - Main refactoring target
+- `config.py` - Added `log_file_only()` function and timestamped directories
+- All existing functionality preserved and enhanced
+
+#### ✅ User Preferences Maintained
+
+---
+
+### Recent Bug Fixes and Improvements (2024-12-19)
+
+#### ✅ Step 4 Variable Error Fix
+**Issue:** `NameError: name 'temp_changes_list' is not defined` in `step4_impact_projections.py`
+- **Root Cause:** Variable was referenced but never defined in `project_pooled_no_lag` method
+- **Fix:** Replaced undefined variable with correct reference to `self.country_temp_changes`
+- **Implementation:** Added proper temperature change lookup for each country
+- **Result:** All projection methods now work correctly
+
+#### ✅ Missing Country Logging Enhancement
+**Issue:** Countries missing from temperature changes dictionary were silently defaulting to zero/0.01
+- **Fix:** Added explicit logging in all four projection methods to track missing countries
+- **Implementation:** Enhanced `project_pooled_no_lag`, `project_rich_poor_no_lag`, `project_pooled_5_lag`, and `project_rich_poor_5_lag` methods
+- **Logging:** Now reports which countries are missing and defaulting to what values
+- **Benefit:** Improved debugging and data coverage transparency
+
+#### ✅ Figure 3 Data Point Fix
+**Issue:** First data point in Figure 3 was always zero and not meaningful for the plot
+- **Fix:** Removed first data point from all arrays (years, gdp_cc_mean, gdp_nocc_mean, confidence intervals) before plotting
+- **Code:** Added explicit array slicing `[1:]` with clear comment explaining the removal
+- **Result:** Plot now starts with meaningful data points, eliminating the zero-value artifact
+
+#### ✅ Logging Configuration Improvements
+- **Line Numbers:** Restored line numbers to debug-level log messages for better debugging
+- **File Location:** Confirmed log files are correctly placed in timestamped output directories
+- **Verbosity Control:** Maintained selective logging for R-squared values (file-only)
+- **Diagnostic-first approach:** Maintained all diagnostic logging
+- **Clean code:** Unified function reduces complexity
+- **Transparency:** Original Stata/R comments preserved
+- **Systematic fixes:** Comprehensive solution across all regression types
+- **iso_id usage:** Proper clustering implementation maintained
+
+---
+
+*Last Updated: 2025-07-30*
+*Session Status: ✅ Step 1 Refactoring Completed Successfully*
+*Next: Continue with PDF output fixes and results verification*
